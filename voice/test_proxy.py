@@ -6,7 +6,8 @@ import sys
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from proxy import ERROR_LINE, LIMIT_LINE, speech_stream  # noqa: E402
+from proxy import (ERROR_LINE, LIMIT_LINE, SessionChains, frame_text,  # noqa: E402
+                   speech_stream, transcript_key)
 
 FILLER = "Секунду, гляну... "
 
@@ -74,6 +75,31 @@ class SpeechStreamTest(unittest.TestCase):
                                      chunk({"content": "Да."}), chunk(finish="stop")], FILLER))
         self.assertEqual(spoken(frames), ("Да.", "stop"))
         self.assertFalse(any(b"hermes.status" in f for f in frames))
+
+
+class TurnChainTest(unittest.TestCase):
+    def test_next_turn_finds_the_session(self):
+        chains = SessionChains()
+        turn1 = [{"role": "system", "content": "Голос."}, {"role": "assistant", "content": "Мур, привет!"},
+                 {"role": "user", "content": "Какая погода?"}]
+        spoken = text_of(speech_stream([chunk({"content": "Плюс девять."}), chunk(finish="stop")], FILLER))
+        chains.put(transcript_key(turn1 + [{"role": "assistant", "content": FILLER + spoken}]), "api-1")
+        # ElevenLabs resends the call; spacing around the filler may differ.
+        turn2 = turn1 + [{"role": "assistant", "content": "Секунду, гляну...  Плюс девять."},
+                         {"role": "user", "content": "А послезавтра?"}]
+        self.assertEqual(chains.get(transcript_key(turn2[:-1])), "api-1")
+
+    def test_other_call_starts_fresh(self):
+        chains = SessionChains()
+        chains.put(transcript_key([{"role": "user", "content": "Привет"},
+                                   {"role": "assistant", "content": "Мур."}]), "api-1")
+        self.assertIsNone(chains.get(transcript_key([{"role": "user", "content": "Привет"}])))
+        self.assertIsNone(chains.get(transcript_key([{"role": "user", "content": "Привет"},
+                                                     {"role": "assistant", "content": "Мяу."}])))
+
+
+def text_of(frames):
+    return "".join(frame_text(f) for f in frames)
 
 
 if __name__ == "__main__":

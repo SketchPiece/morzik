@@ -11,10 +11,16 @@ ElevenLabs (Custom LLM) -> tunnel -> this proxy (127.0.0.1:8650) -> Hermes api_s
 - Speech-friendly stream: Hermes' own SSE events are dropped, and when Morzik reaches for a tool
   before saying anything the caller gets a short filler at once ("Секунду, гляну... ") instead of
   silence until the whole turn is done.
+- Turn chaining: ElevenLabs resends the call as plain text, without tool calls and results, so on the
+  next turn Morzik would think he made up what he had looked up. After each turn the proxy remembers
+  the transcript it produced and Hermes' session id; when the next request continues exactly that
+  transcript, it sends X-Hermes-Session-Id and Hermes takes the history, tools included, from its own
+  session store.
 
 Settings come from the environment, falling back to ~/.hermes/.env. Standard library only.
 """
 
+import hashlib
 import hmac
 import http.client
 import json
@@ -87,6 +93,55 @@ class RateLimiter:
                     return False
             self.hits.append(now)
             return True
+
+
+def transcript_key(messages: list) -> str:
+    """Fingerprint of a conversation as ElevenLabs sends it (system prompt included)."""
+    turns = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content")
+        if isinstance(content, list):  # content parts
+            content = " ".join(p.get("text", "") for p in content if isinstance(p, dict))
+        turns.append([str(msg.get("role")), " ".join(str(content or "").split())])
+    return hashlib.sha256(json.dumps(turns, ensure_ascii=False).encode()).hexdigest()
+
+
+class SessionChains:
+    """Transcript fingerprint -> Hermes session id, for continuing the same call."""
+
+    def __init__(self, ttl: float = 4 * 3600, size: int = 500):
+        self.ttl, self.size = ttl, size
+        self.items: dict[str, tuple[str, float]] = {}
+        self.lock = threading.Lock()
+
+    def get(self, key: str) -> str | None:
+        with self.lock:
+            hit = self.items.get(key)
+            if hit and time.monotonic() - hit[1] <= self.ttl:
+                return hit[0]
+            self.items.pop(key, None)
+            return None
+
+    def put(self, key: str, session_id: str) -> None:
+        with self.lock:
+            self.items[key] = (session_id, time.monotonic())
+            while len(self.items) > self.size:
+                self.items.pop(next(iter(self.items)))
+
+
+def frame_text(frame: bytes) -> str:
+    """Spoken text in one outgoing SSE frame."""
+    text = ""
+    for line in frame.decode("utf-8", "replace").splitlines():
+        if line.startswith("data: {"):
+            try:
+                choice = (json.loads(line[6:]).get("choices") or [{}])[0]
+            except ValueError:
+                continue
+            text += (choice.get("delta") or {}).get("content") or ""
+    return text
 
 
 def sse_events(resp):
@@ -192,6 +247,7 @@ class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     settings: dict = {}
     limiter: RateLimiter
+    chains = SessionChains()
     streaming = False  # True once the 200 SSE headers are out
 
     def log_message(self, fmt, *args):
@@ -246,11 +302,16 @@ class Handler(BaseHTTPRequestHandler):
         upstream_body = {k: body[k] for k in PASSED_FIELDS if k in body}
         upstream_body["model"] = MODEL_ALIAS
         stream = bool(upstream_body.get("stream"))
+        headers = {"Authorization": f"Bearer {s['upstream_key']}", "Content-Type": "application/json"}
+        messages = body["messages"]
+        session_id = self.chains.get(transcript_key(messages[:-1]))
+        if session_id:
+            headers["X-Hermes-Session-Id"] = session_id
+        log.info("turn %s", f"continues {session_id}" if session_id else "starts a chain")
         conn = http.client.HTTPConnection(s["upstream_host"], s["upstream_port"], timeout=300)
         started = time.monotonic()
         try:
-            conn.request("POST", ROUTE, body=json.dumps(upstream_body).encode(), headers={
-                "Authorization": f"Bearer {s['upstream_key']}", "Content-Type": "application/json"})
+            conn.request("POST", ROUTE, body=json.dumps(upstream_body).encode(), headers=headers)
             resp = conn.getresponse()
             if not stream or resp.status != 200:
                 payload = resp.read()
@@ -261,8 +322,14 @@ class Handler(BaseHTTPRequestHandler):
                 self.close_connection = True
                 self.end_headers()
                 self.wfile.write(payload)
+                if resp.status == 200:
+                    try:
+                        reply = json.loads(payload)["choices"][0]["message"]["content"]
+                    except (ValueError, KeyError, IndexError, TypeError):
+                        reply = None
+                    self.remember(messages, resp, reply)
                 return
-            self.relay_stream(resp, started)
+            self.remember(messages, resp, self.relay_stream(resp, started))
         except (ConnectionError, OSError, http.client.HTTPException) as exc:
             log.warning("upstream failed: %s", exc)
             if not self.streaming:
@@ -273,7 +340,17 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             conn.close()
 
-    def relay_stream(self, resp, started: float) -> None:
+    def remember(self, messages: list, resp, reply) -> None:
+        """Let the next turn of this call continue Hermes' session, tool results included."""
+        session_id = resp.getheader("X-Hermes-Session-Id")
+        if not session_id or not isinstance(reply, str) or not reply.strip():
+            return
+        if LIMIT_LINE in reply or ERROR_LINE in reply:
+            return  # a failed turn may be missing from the session
+        self.chains.put(transcript_key(messages + [{"role": "assistant", "content": reply}]), session_id)
+
+    def relay_stream(self, resp, started: float) -> str:
+        """Relay the stream; returns the text the caller got."""
         self.streaming = True
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -285,10 +362,13 @@ class Handler(BaseHTTPRequestHandler):
         def note(what: str) -> None:
             log.info("%s at %.2fs", what, time.monotonic() - started)
 
+        spoken = ""
         for frame in speech_stream(sse_events(resp), self.settings["filler"], note):
             self.wfile.write(frame)
             self.wfile.flush()
+            spoken += frame_text(frame)
         note("stream done")
+        return spoken
 
 
 def main() -> None:
