@@ -8,7 +8,7 @@ const here = __dirname, frames = fs.mkdtempSync('/tmp/morzik-banner-');
 (async () => {
   const browser = await puppeteer.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: 'new', args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
   const page = await browser.newPage();
-  await page.setViewport({ width: 960, height: 320 });
+  await page.setViewport({ width: 960, height: 380 });
   await page.goto('file://' + path.join(here, 'banner.html?manual'), { waitUntil: 'networkidle0' });
   await page.evaluate('document.fonts.ready');
   const loop = await page.evaluate('window.loop'), n = Math.round(loop * fps);
