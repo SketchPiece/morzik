@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
-export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [], manual = false } = {}) {
+export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [], manual = false, shiftY = 0 } = {}) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
   renderer.setPixelRatio(2); renderer.setSize(size, size, false);
   renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
@@ -13,7 +13,7 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
   const radialTex = stops => tex(256, 256, (x, w) => { const g = x.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2); stops.forEach(([o, c]) => g.addColorStop(o, c)); x.fillStyle = g; x.fillRect(0, 0, w, w); });
   scene.background = tex(512, 512, (x) => { const g = x.createRadialGradient(256, 200, 0, 256, 220, 360); g.addColorStop(0, '#34477C'); g.addColorStop(1, '#10172C'); x.fillStyle = g; x.fillRect(0, 0, 512, 512); });
   const pm = new THREE.PMREMGenerator(renderer); scene.environment = pm.fromScene(new RoomEnvironment(), .04).texture; scene.environmentIntensity = .45;
-  const camera = new THREE.PerspectiveCamera(30, 1, .1, 50); camera.position.set(0, .2, 6.7); camera.lookAt(0, -.08, 0);
+  const camera = new THREE.PerspectiveCamera(30, 1, .1, 50); camera.position.set(0, .2 + shiftY, 6.7); camera.lookAt(0, -.08 + shiftY, 0); // shiftY > 0 опускает кота в кадре (для авы)
   scene.add(new THREE.HemisphereLight(0xe6ecff, 0x1a2140, .8));
   const key = new THREE.DirectionalLight(0xfff2e6, 1.8); key.position.set(-3, 4, 5); scene.add(key);
   const rimR = new THREE.DirectionalLight(0x9fb8ff, 1.8); rimR.position.set(3.5, 2, -3); scene.add(rimR);

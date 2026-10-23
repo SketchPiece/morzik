@@ -14,7 +14,7 @@
 
 ## Аватарка
 
-`design/avatar/`: `morzik-800.mp4` (анимированная, 800×800, 8 с, H.264 без звука), `morzik-800.png` / `.jpg` (статичный кадр на 1,0 с).
+`design/avatar/`: `morzik-800.mp4` (анимированная, 800×800, 8 с, H.264 без звука), `morzik-800.png` / `.jpg` (статичный кадр на 1,0 с). Кот опущен в кадре на `shiftY: .35`, чтобы уши и наушники не срезала шапка профиля Telegram.
 
 Пересобрать: `NODE_PATH=<папка с puppeteer-core>/node_modules node design/avatar/render.cjs [fps=30] [кадр=1.0]` (нужны Google Chrome и ffmpeg). `design/avatar/render.html` без параметров показывает живую анимацию.
 
