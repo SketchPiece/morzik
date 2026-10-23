@@ -6,10 +6,10 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=Unbounded:wght@600&display=swap">
 <style>
   html, body { margin: 0; background: #10172C }
-  .banner { position: relative; width: 960px; height: 320px; overflow: hidden; color: #fff; font-family: Inter, system-ui, sans-serif; -webkit-font-smoothing: antialiased;
-    background: radial-gradient(520px 420px at 190px 150px, #34477C, #10172C) }
-  canvas { position: absolute; left: 30px; top: 0; width: 320px; height: 320px }
-  .text { position: absolute; left: 380px; top: 78px }
+  .banner { position: relative; width: 960px; height: 380px; overflow: hidden; color: #fff; font-family: Inter, system-ui, sans-serif; -webkit-font-smoothing: antialiased;
+    background: radial-gradient(520px 420px at 200px 180px, #34477C, #10172C) }
+  canvas { position: absolute; left: 10px; top: 0; width: 380px; height: 380px }
+  .text { position: absolute; left: 400px; top: 108px }
   h1 { margin: 0; font-family: Unbounded, Inter, sans-serif; font-weight: 600; font-size: 64px; letter-spacing: -.01em }
   p { margin: 14px 0 0; font-size: 22px; color: #C9D2EE }
   .morse { display: flex; align-items: center; gap: 14px; margin-top: 30px; height: 16px }
@@ -28,10 +28,10 @@
 </div>
 <script src="../canvas/morzik-character/_cat2.bundle.js"></script>
 <script>
-// Morzik waves, the morse «·–··–» (the same letter as his whiskers) is tapped out once per loop and then glows.
+// Morzik with his floating paws (he waves at 5.3–6.9 s), the morse «·–··–» (the same letter as his whiskers) is tapped out once per loop and then glows.
 // Without ?t this is the live animation; render.cjs calls window.frameAt(t) for each frame.
 const c = document.getElementById('c');
-const r = morzikCat2(c, { size: 320, manual: true, transparent: true, paws: 'wave', shiftY: .1 });
+const r = morzikCat2(c, { size: 380, manual: true, transparent: true, paws: 'float', zoom: .72 });
 const marks = [...document.querySelectorAll('.morse i')];
 const tap = [0, 1, 3, 1, 1, 3];  // lengths of dot / dash in morse units, then the gaps are one unit
 window.loop = r.loop;
