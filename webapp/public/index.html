@@ -17,9 +17,11 @@
   }
   setTimeout(() => __diag('t0'), 50); setTimeout(() => __diag('t2'), 2000);
 </script>
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<!-- Копия telegram-web-app.js лежит рядом, чтобы запуск не ждал telegram.org. -->
+<script src="telegram-web-app.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=Unbounded:wght@600&display=swap">
+<!-- Шрифты не блокируют страницу: пока стили не пришли, нижний скрипт (полный экран, цвета) не выполнялся бы. -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=Unbounded:wght@600&display=swap" media="print" onload="this.media='all'">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0 }
   html, body { height: 100%; background: #10172C; color: #fff; font-family: Inter, system-ui, sans-serif; -webkit-font-smoothing: antialiased; overflow: hidden }
