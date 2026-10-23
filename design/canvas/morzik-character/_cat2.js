@@ -146,9 +146,10 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     floatPaws.push({ g, sx });
   });
   const POSES = {
-    float: sx => ({ p: [sx * 1.0, -.95, .66], r: [.9, 0, sx * .25] }),   // парит сбоку, ладошкой вниз
-    wave: sx => ({ p: [sx * 1.22, -.38, .78], r: [.05, -sx * .25, 0] }),    // поднята у щеки, ладошкой к нам
+    float: sx => ({ p: [sx * .38, -1.6, .78], r: [1.15, 0, 0] }),          // лежит внизу, как в «Лапки 1», подушечками вниз
+    wave: sx => ({ p: [sx * .86, -.38, .92], r: [.05, -sx * .2, 0] }),     // поднята у щеки, ладошкой к нам (верх дуги маханья)
   };
+  const WAVE_PIVOT = sx => [sx * .86, -1.02, .92], WAVE_R = .64;          // маханье — по дуге вокруг точки ниже лапки, как дворник
   const lerpPose = (a, b, k) => ({ p: a.p.map((v, i) => v + (b.p[i] - v) * k), r: a.r.map((v, i) => v + (b.r[i] - v) * k) });
   const applyPose = (g, q) => { g.position.set(...q.p); g.rotation.set(...q.r); };
   let arm = null;
@@ -186,14 +187,16 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     body.scale.y = .88 * (1 + .012 * Math.sin(t / 4 * Math.PI * 2));
     head.rotation.z = .03 * Math.sin(w); head.rotation.y = look * 1.6; head.position.y = .3 + .015 * Math.sin(t / 4 * Math.PI * 2);
     tail.rotation.z = .14 * Math.sin(w + 1);
-    // Парящие лапки: покачиваются не в такт; на 5,3–6,9 с правая (в сцене) поднимается, дважды машет и возвращается.
+    // Парящие лапки: лежат внизу и чуть покачиваются не в такт; на 5,3–6,9 с правая (в сцене) поднимается,
+    // дважды проходит туда-сюда по дуге и опускается обратно.
     floatPaws.forEach(({ g, sx }, i) => {
       let q = POSES.float(sx);
-      q.p[1] += .045 * Math.sin(t / 4 * Math.PI * 2 + i * 1.7);
+      q.p[1] += .03 * Math.sin(t / 4 * Math.PI * 2 + i * 1.7);
       if (sx > 0) {
         const up = ease((t - 5.3) / .45) - ease((t - 6.45) / .45);
-        q = lerpPose(q, POSES.wave(sx), up);
-        q.r[2] += up * .38 * Math.sin((t - 5.6) / .42 * Math.PI * 2) * (t > 5.6 && t < 6.44 ? 1 : 0);
+        const swing = t > 5.6 && t < 6.44 ? .42 * Math.sin((t - 5.6) / .42 * Math.PI * 2) : 0;
+        const [cx, cy, cz] = WAVE_PIVOT(sx), raised = { p: [cx + Math.sin(swing) * WAVE_R, cy + Math.cos(swing) * WAVE_R, cz], r: [.05, -sx * .2, -swing * .5] };
+        q = lerpPose(q, raised, up);
       }
       applyPose(g, q);
     });
