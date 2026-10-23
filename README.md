@@ -51,14 +51,14 @@ The «Morzik» button left of the message field opens his full-screen app. For n
 
 | Part | Where | What it is |
 |---|---|---|
-| Brain | [Hermes Agent](https://github.com/NousResearch/hermes-agent) on a Mac | Model, memory, tools, scheduling, Telegram |
+| Brain | [Hermes Agent](https://github.com/NousResearch/hermes-agent) on the home server (`sketch-server`) | Model, memory, tools, scheduling, Telegram, his own browser |
 | Character | `~/.hermes/SOUL.md` | How he talks and behaves |
 | Chat manners | `~/.hermes/plugins/morzik-chat` | Splitting replies into messages, «typing…» only when it fits, «sec» before a lookup, `/restart`, `/clean` |
 | Apple | [`bridge/`](bridge) | MCP server in Swift for Calendar and Reminders |
 | Looks | [`design/`](design) | three.js 3D model, design canvases with variants, avatar rendering |
 | App | [`webapp/`](webapp) | Telegram Mini App on [pieces.run](https://pieces.run) |
 
-The bot itself, with its keys and tokens, lives in `~/.hermes` and is not part of this repository.
+The bot itself, with its keys and tokens, lives in `~/.hermes` of the `morzik` user on the home server and is not part of this repository; the Calendar and Reminders bridge and Semafor stay on the Mac.
 
 ## In this repository
 
