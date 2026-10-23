@@ -98,5 +98,6 @@ BOARDS = [
  ("d-blink.html", "Г · Круглые и моргает", "round", "не выключай меня, пожалуйста", "жизней у меня девять, а аптайм один", BLINK),
 ]
 
-for name, title, eye, top, bottom, *extra in BOARDS:
+if __name__ == "__main__":
+  for name, title, eye, top, bottom, *extra in BOARDS:
     (HERE / name).write_text(board(title, eye, top, bottom, *extra))

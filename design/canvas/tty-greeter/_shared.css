@@ -7,3 +7,4 @@ pre b { font-weight: 400; }
 .top { color: #ffffff; }
 .bottom { color: #aaaaaa; }
 .key { color: #ffff55; }
+.pix { display: grid; } .pix i { display: block; }
