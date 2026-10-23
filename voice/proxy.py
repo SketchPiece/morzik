@@ -28,6 +28,7 @@ import logging
 import os
 import pathlib
 import random
+import re
 import threading
 import time
 from collections import deque
@@ -103,16 +104,20 @@ class RateLimiter:
             return True
 
 
+def plain(content) -> str:
+    """Message text reduced to letters and digits: ElevenLabs keeps the transcript of what was said,
+    which may differ from what we sent in audio tags, punctuation and spacing."""
+    if isinstance(content, list):  # content parts
+        content = " ".join(p.get("text", "") for p in content if isinstance(p, dict))
+    text = re.sub(r"\[[^\]]*\]", " ", str(content or "")).lower()
+    return "".join(ch for ch in text if ch.isalnum())
+
+
 def transcript_key(messages: list) -> str:
-    """Fingerprint of a conversation as ElevenLabs sends it (system prompt included)."""
-    turns = []
-    for msg in messages:
-        if not isinstance(msg, dict):
-            continue
-        content = msg.get("content")
-        if isinstance(content, list):  # content parts
-            content = " ".join(p.get("text", "") for p in content if isinstance(p, dict))
-        turns.append([str(msg.get("role")), " ".join(str(content or "").split())])
+    """Fingerprint of a conversation as ElevenLabs sends it. The system prompt is left out: ElevenLabs
+    puts the current time in it, so it changes from turn to turn."""
+    turns = [[str(m.get("role")), plain(m.get("content"))] for m in messages
+             if isinstance(m, dict) and m.get("role") != "system"]
     return hashlib.sha256(json.dumps(turns, ensure_ascii=False).encode()).hexdigest()
 
 
@@ -316,6 +321,8 @@ class Handler(BaseHTTPRequestHandler):
         if session_id:
             headers["X-Hermes-Session-Id"] = session_id
         log.info("turn %s", f"continues {session_id}" if session_id else "starts a chain")
+        if not session_id and any(isinstance(m, dict) and m.get("role") == "assistant" for m in messages):
+            log.info("chain miss: roles %s", [m.get("role") for m in messages if isinstance(m, dict)])
         conn = http.client.HTTPConnection(s["upstream_host"], s["upstream_port"], timeout=300)
         started = time.monotonic()
         try:

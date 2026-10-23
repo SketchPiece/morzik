@@ -89,6 +89,21 @@ class TurnChainTest(unittest.TestCase):
                          {"role": "user", "content": "А послезавтра?"}]
         self.assertEqual(chains.get(transcript_key(turn2[:-1])), "api-1")
 
+    def test_system_prompt_may_change_between_turns(self):
+        chains = SessionChains()
+        turn1 = [{"role": "system", "content": "Сейчас 16:28."}, {"role": "user", "content": "Погода?"}]
+        chains.put(transcript_key(turn1 + [{"role": "assistant", "content": "Дождь."}]), "api-1")
+        turn2 = [{"role": "system", "content": "Сейчас 16:29."}, {"role": "user", "content": "Погода?"},
+                 {"role": "assistant", "content": "Дождь."}, {"role": "user", "content": "Точно?"}]
+        self.assertEqual(chains.get(transcript_key(turn2[:-1])), "api-1")
+
+    def test_transcript_without_audio_tags_matches(self):
+        sent = [{"role": "user", "content": "Как дела?"},
+                {"role": "assistant", "content": "[mischievously] Мрр, отлично!  А у тебя?"}]
+        heard = [{"role": "user", "content": "Как дела?"},
+                 {"role": "assistant", "content": "Мрр, отлично! А у тебя?"}]
+        self.assertEqual(transcript_key(sent), transcript_key(heard))
+
     def test_other_call_starts_fresh(self):
         chains = SessionChains()
         chains.put(transcript_key([{"role": "user", "content": "Привет"},
