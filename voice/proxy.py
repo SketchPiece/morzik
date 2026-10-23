@@ -56,6 +56,9 @@ def load_settings() -> dict:
         "key": get("MORZIK_VOICE_KEY"),
         "allowed_ips": {ip.strip() for ip in get("MORZIK_VOICE_ALLOWED_IPS").split(",") if ip.strip()},
         "ip_header": get("MORZIK_VOICE_IP_HEADER", "X-Forwarded-For"),
+        # Peers allowed to tell us the caller's IP (the tunnel); everyone else is taken at face value.
+        "trusted_proxies": {ip.strip() for ip in get(
+            "MORZIK_VOICE_TRUSTED_PROXIES", "127.0.0.1,::1").split(",") if ip.strip()},
         "per_minute": int(get("MORZIK_VOICE_PER_MINUTE", "30")),
         "per_day": int(get("MORZIK_VOICE_PER_DAY", "1500")),
         "max_body": int(get("MORZIK_VOICE_MAX_BODY", str(512 * 1024))),
@@ -107,6 +110,82 @@ def sse_events(resp):
         yield name, "\n".join(data), raw
 
 
+# Spoken instead of Hermes' raw error text (model errors, provider limits), like morzik-chat in Telegram.
+LIMIT_LINE = "Ой, я выдохся, лимит кончился. Давай чуть позже."
+ERROR_LINE = "Ой, я что-то завис. Повтори, пожалуйста?"
+
+
+def _frame(data: dict) -> bytes:
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n".encode()
+
+
+def _content_chunk(meta: dict, text: str) -> bytes:
+    return _frame({"id": meta.get("id") or "chatcmpl-morzik-voice", "object": "chat.completion.chunk",
+                   "created": meta.get("created") or int(time.time()), "model": MODEL_ALIAS,
+                   "choices": [{"index": 0, "delta": {"content": text}, "finish_reason": None}]})
+
+
+def speech_stream(events, filler: str, note=lambda what: None):
+    """Hermes chat-completion SSE events -> frames fit to be spoken.
+
+    Drops Hermes' own named events; says *filler* when a tool starts before any words; holds each
+    text chunk until the next event, so a failed turn (finish_reason other than "stop") is voiced as
+    a short apology instead of the raw error text.
+    """
+    spoke = False
+    meta: dict = {}
+    held: list[bytes] = []  # text frames not yet released
+    for name, data, raw in events:
+        if name == "hermes.tool.progress":
+            if not spoke and filler:
+                try:
+                    running = json.loads(data).get("status") == "running"
+                except ValueError:
+                    running = False
+                if running:
+                    yield from held
+                    held = []
+                    yield _content_chunk(meta, filler)
+                    note("filler")
+                    spoke = True
+            continue
+        if name and name.startswith("hermes."):
+            continue
+        chunk = None
+        if data and data != "[DONE]":
+            try:
+                chunk = json.loads(data)
+            except ValueError:
+                pass
+        if isinstance(chunk, dict):
+            meta = meta or {k: chunk.get(k) for k in ("id", "created", "model")}
+            choice = (chunk.get("choices") or [{}])[0]
+            finish = choice.get("finish_reason")
+            if finish and finish != "stop":
+                error = json.dumps(chunk.get("error") or chunk.get("hermes") or {})
+                limited = any(word in error.lower() for word in ("429", "rate", "limit", "quota"))
+                note(f"turn ended with {finish}, held text dropped")
+                held = []
+                yield _content_chunk(meta, " " + (LIMIT_LINE if limited else ERROR_LINE))
+                choice["finish_reason"] = "stop"
+                chunk.pop("error", None)
+                chunk.pop("hermes", None)
+                yield _frame(chunk)
+                continue
+            if (choice.get("delta") or {}).get("content"):
+                if not spoke:
+                    note("first content")
+                spoke = True
+                yield from held
+                held = [b"".join(raw)]
+                continue
+        yield from held
+        held = []
+        yield b"".join(raw)
+    yield from held
+
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "morzik-voice"
     sys_version = ""
@@ -119,9 +198,13 @@ class Handler(BaseHTTPRequestHandler):
         log.info("%s %s", self.client_ip(), fmt % args)
 
     def client_ip(self) -> str:
+        peer = self.client_address[0]
+        if peer not in self.settings["trusted_proxies"]:
+            return peer
         headers = getattr(self, "headers", None)  # absent when the request line was malformed
         forwarded = headers.get(self.settings["ip_header"], "") if headers else ""
-        return forwarded.split(",")[0].strip() or self.client_address[0]
+        # The tunnel appends the address it saw; earlier entries come from the caller and can be forged.
+        return forwarded.split(",")[-1].strip() or peer
 
     def reply(self, status: int, message: str) -> None:
         body = json.dumps({"error": {"message": message, "type": "morzik_voice_proxy"}}).encode()
@@ -198,44 +281,14 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Connection", "close")
         self.end_headers()
         self.close_connection = True
-        spoke = False
-        meta = {}  # id/model/created copied into the filler chunk
-        for name, data, raw in sse_events(resp):
-            if name == "hermes.tool.progress":
-                if not spoke:
-                    try:
-                        status = json.loads(data).get("status")
-                    except ValueError:
-                        status = None
-                    if status == "running" and self.settings["filler"]:
-                        self.write_chunk(meta, self.settings["filler"])
-                        log.info("filler at %.2fs", time.monotonic() - started)
-                        spoke = True
-                continue
-            if name and name.startswith("hermes."):
-                continue
-            if data and data != "[DONE]":
-                try:
-                    chunk = json.loads(data)
-                    meta = meta or {k: chunk.get(k) for k in ("id", "created", "model")}
-                    delta = (chunk.get("choices") or [{}])[0].get("delta") or {}
-                    if delta.get("content"):
-                        if not spoke:
-                            log.info("first content at %.2fs", time.monotonic() - started)
-                        spoke = True
-                except ValueError:
-                    pass
-            self.wfile.write(b"".join(raw))
-            self.wfile.flush()
-        log.info("stream done at %.2fs", time.monotonic() - started)
 
-    def write_chunk(self, meta: dict, text: str) -> None:
-        chunk = {"id": meta.get("id") or "chatcmpl-morzik-voice", "object": "chat.completion.chunk",
-                 "created": meta.get("created") or int(time.time()), "model": MODEL_ALIAS,
-                 "choices": [{"index": 0, "delta": {"role": "assistant", "content": text},
-                              "finish_reason": None}]}
-        self.wfile.write(f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n".encode())
-        self.wfile.flush()
+        def note(what: str) -> None:
+            log.info("%s at %.2fs", what, time.monotonic() - started)
+
+        for frame in speech_stream(sse_events(resp), self.settings["filler"], note):
+            self.wfile.write(frame)
+            self.wfile.flush()
+        note("stream done")
 
 
 def main() -> None:
