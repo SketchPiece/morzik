@@ -41,7 +41,18 @@
 
 ## Где живёт бот
 
-Сам бот — в `~/.hermes` на Mac (не в этом репозитории, там токены):
+С 23.10.2026 бот живёт на домашнем сервере `sketch-server` (старый ноутбук с Ubuntu, в tailnet `sketch-server.tail923acf.ts.net`), у пользователя `morzik` без sudo, в `/home/morzik/.hermes` (не в этом репозитории, там токены). Как сервер настроен и как Морзик туда переехал — в репозитории `~/Documents/Projects/sketch-server` (`setup/60-…`, `setup/61-…`, `morzik/`). На Маке остались только мост к Календарю и Напоминаниям и Semafor; старый `~/.hermes` на Маке лежит как резервная копия, его LaunchAgent'ы убраны в `~/Library/LaunchAgents/disabled-moved-to-sketch-server/`.
+
+На сервере:
+
+- службы — systemd user units пользователя `morzik`: `hermes-gateway` (Telegram, cron, api_server; видит экран `DISPLAY=:1`), `morzik-voice` (голосовой прокси), `morzik-screen` (TigerVNC 1440×900), `morzik-wm` (Openbox), `morzik-chrome` (Chrome с профилем `~/.config/morzik-chrome`, CDP на `127.0.0.1:9222`), `morzik-novnc`. Управлять: `sudo -u morzik XDG_RUNTIME_DIR=/run/user/$(id -u morzik) systemctl --user …`, лог шлюза — `/home/morzik/.hermes/logs/gateway.log`.
+- экран Морзика смотреть и входить в аккаунты — noVNC `https://sketch-server.tail923acf.ts.net:6080/vnc.html` (только tailnet, пароль: `sudo cat /home/morzik/.vnc/password.txt` на сервере). Браузер (Browser Use, `browser_exec`) и computer use (cua-driver) работают в этом же Chrome на этом же экране, так что входы, сделанные руками, Морзик видит.
+- Semafor: `mcp_servers.semafor` — это `ssh` на Мак ключом `~/.ssh/semafor_mac`, которому в `~/.ssh/authorized_keys` Мака разрешено только запускать `semafor-mcp` (forced command, `from=` адрес сервера в tailnet, `restrict`).
+- Календарь и Напоминания: `mcp_servers.apple.url` = `https://<mac>.tail923acf.ts.net:8765/mcp` (мост открыт в tailnet через `tailscale serve` на Маке).
+- часовой пояс сервера — <local tz>, как у расписаний.
+- у бота свой вход в Claude (подписка) — Claude Code пользователя `morzik`.
+
+Как было на Маке (настройки те же):
 
 - `SOUL.md` — личность и манера Морзика. В речи он домашний кот, а не дежурный: без «на связи», «принял», «дежурю» (гарнитура осталась только во внешности). Про свою фоновую работу говорит по-человечески, без технических подробностей и цифр; точное время называет, только когда оно важно пользователю или он спросил. Если для ответа надо куда-то сходить (почта, календарь, поиск), сначала пишет одно-два слова, что пошёл смотреть, каждый раз по-разному, а дальше работает молча.
 - `skills/personal/` — `helm` (передать работу в Helm через Helm MCP), `action-items` (список дел), `usage-report` (расход), `dreamer`.
@@ -80,9 +91,9 @@
 - Инструменты: `status`, `calendar_list_calendars`, `calendar_list_events`, `calendar_create_event`, `calendar_update_event`, `calendar_delete_event`, `reminders_list_lists`, `reminders_list`, `reminders_create`, `reminders_update`, `reminders_complete`, `reminders_delete`. Время без смещения считается временем Мака. Если у напоминания указано время, мост ставит на него будильник, иначе Напоминания не присылают уведомление.
 - В Hermes: `config.yaml` → `mcp_servers.apple` (`http://127.0.0.1:8765/mcp`, заголовок `Authorization: ${MORZIK_BRIDGE_AUTH}` из `~/.hermes/.env`). Скилл `skills/personal/apple-calendar` объясняет, когда ставить напоминание в Apple, а когда свой cron; календарь и список Напоминаний Морзик выбирает по смыслу дела и по тому, где лежат похожие, а не по умолчанию. Стоковый `apple-reminders` (через `remindctl`) выключен.
 
-### Когда Морзик переедет на Linux
+### Мост, когда Морзик на сервере (сделано 23.10.2026)
 
-Мост остаётся на Маке, мы только открываем его в tailnet, наружу в интернет он не торчит:
+Мост остаётся на Маке, он открыт только в tailnet, наружу в интернет не торчит:
 
 1. На Маке: `tailscale serve --bg --https=8765 http://127.0.0.1:8765`. Мост будет доступен по адресу `https://<mac>.<tailnet>.ts.net:8765/mcp` только с устройств в tailnet.
 2. Linux-сервер подключить к тому же tailnet.
