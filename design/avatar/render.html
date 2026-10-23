@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Морзик — кадр для аватарки</title>
+<style>html,body{margin:0;background:#10172C}canvas{display:block}</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script src="../canvas/morzik-character/_cat2.bundle.js"></script>
+<script>
+// ?size=400 даёт кадр 800×800 (pixelRatio 2). Без ?t — живая анимация, с ?t=1.0 — один кадр.
+const q = new URLSearchParams(location.search), size = +(q.get('size') || 400), c = document.getElementById('c');
+c.style.width = c.style.height = size + 'px';
+const r = morzikCat2(c, { size, manual: true });
+window.renderAt = t => { r.frame(t); return c.toDataURL('image/png'); };
+window.loop = r.loop;
+if (q.get('t') != null) r.frame(+q.get('t'));
+else { const t0 = performance.now(); const tick = now => { r.frame((now - t0) / 1000); requestAnimationFrame(tick); }; requestAnimationFrame(tick); }
+</script>
+</body>
+</html>

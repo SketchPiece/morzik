@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="board" content="1040x600">
+<title>3D·1. Мультяшное 3D, стекло</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@600&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@500&display=swap">
+<link rel="stylesheet" href="_shared.css">
+<style>.big canvas{display:block;width:420px;height:420px;border-radius:50%}.ref{display:flex;align-items:center;gap:14px}</style>
+</head>
+<body class="neutral">
+<main>
+  <div class="big"><canvas id="c"></canvas></div>
+  <div class="side">
+    <h1>3D·1. Мультяшное 3D, стекло</h1>
+    <p>Н3·1 как 3D-модель: настоящее прозрачное стекло с отражениями, металлическая резьба цоколя, глянцевые чёрные глаза-пуговки, раскалённая спираль подсвечивает лицо. Лампа чуть поворачивается, чтобы был виден объём.</p>
+    <div class="ref"><span id="r"></span><p>Рядом утверждённый Н3·1 в 2D, для сравнения.</p></div>
+  </div>
+</main>
+<script src="_shared.js"></script>
+<script src="_3d.js"></script>
+<script src="_mix.js"></script>
+<script>document.getElementById('r').innerHTML = avatar('clearGlow', 96);</script>
+<script src="_three.bundle.js"></script>
+<script>
+const q = new URLSearchParams(location.search).get('t');
+morzik3d(document.getElementById('c'), { style: 'glass', size: 420, t: q == null ? null : +q });
+</script>
+</body>
+</html>

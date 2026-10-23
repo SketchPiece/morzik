@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="board" content="1040x600">
+<title>Кот·4. Робокот</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@600&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@500&display=swap">
+<link rel="stylesheet" href="_shared.css">
+<style>.big canvas{display:block;width:420px;height:420px;border-radius:50%}.m{display:block;border-radius:50%}</style>
+</head>
+<body class="neutral">
+<main>
+  <div class="big"><canvas id="c"></canvas></div>
+  <div class="side">
+    <h1>Кот·4. Робокот</h1>
+    <p>Глянцевый белый пластик, на морде тёмный экран с янтарными глазами-капсулами и ртом «ω», уши и кончик хвоста светятся. Самый технологичный.</p>
+    <div class="tg">
+      <div class="contact"><canvas class="m" width="88" height="88" style="width:44px;height:44px"></canvas><div><b>Морзик</b><span>печатает…</span></div></div>
+      <div class="msg"><canvas class="m" width="60" height="60" style="width:30px;height:30px"></canvas><div class="bubble">Готово, письмо Лене в черновиках. Отправить?</div></div>
+    </div>
+    <div class="sizes">
+      <figure><canvas class="m" width="128" height="128" style="width:64px;height:64px"></canvas><figcaption>64</figcaption></figure>
+      <figure><canvas class="m" width="80" height="80" style="width:40px;height:40px"></canvas><figcaption>40</figcaption></figure>
+      <figure><canvas class="m" width="56" height="56" style="width:28px;height:28px"></canvas><figcaption>28</figcaption></figure>
+      <figure><canvas class="m" width="40" height="40" style="width:20px;height:20px"></canvas><figcaption>20</figcaption></figure>
+    </div>
+  </div>
+</main>
+<script src="_cats.bundle.js"></script>
+<script>
+const q = new URLSearchParams(location.search).get('t');
+morzikCat(document.getElementById('c'), { variant: 'robot', size: 420, t: q == null ? null : +q, mirrors: [...document.querySelectorAll('canvas.m')] });
+</script>
+</body>
+</html>
