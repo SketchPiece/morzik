@@ -3,9 +3,12 @@
 avatar's colours and a random joke. Enter hands the console to agetty for a normal login;
 when that session ends systemd starts this screen again.
 
-The Linux console has 16 colours, which can be set to any RGB (ESC ] P), so the palette
-in pixel.py becomes the console's own. Each art pixel is SCALE columns wide and SCALE
-half-rows tall, drawn with ▀ (top half in the foreground colour, bottom in the background).
+The Linux console has 16 colours, which can be set to any RGB (ESC ] P n rrggbb, n in ANSI
+order), so the palette in pixel.py becomes the console's own. Only the classic SGR colours
+read that palette (30-37, bold for 8-15; 38;5;n is mapped to fixed colours instead), and
+only 8 of them work as backgrounds, so every pixel is drawn as foreground █ blocks on the
+navy background (slot 0). The console font has █ but not ▀/▄, so pixels are whole cells:
+SX columns by SY rows, 4×2 = a square 32 px pixel with the 8×16 font.
 """
 import glob, os, random, select, sys, termios, time, tty
 from pathlib import Path
@@ -13,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from pixel import FPS, PALETTE, timeline
 
-SCALE = 3
+SX, SY = 4, 2
 JOKES = Path(os.environ.get("MORZIK_GREETER_JOKES", "/usr/local/share/morzik-greeter/jokes.tsv"))
 RECENT = Path("/var/lib/morzik-greeter/recent")
 AGETTY = ["/usr/sbin/agetty", "--noreset", "--noclear",
@@ -27,6 +30,13 @@ TEXT_TOP, TEXT_BOTTOM, TEXT_KEY = SLOT["H"], SLOT["h"], SLOT["O"]
 
 def out(s):
     os.write(sys.stdout.fileno(), s.encode())
+
+
+def fg(slot):
+    return f"\033[{'1' if slot >= 8 else '22'};{30 + slot % 8}m"
+
+
+BG = "\033[40m"
 
 
 def set_palette():
@@ -64,23 +74,24 @@ def lid_closed():
 
 
 def cells(frame):
-    """Text cells (top colour, bottom colour) for one frame at SCALE."""
+    """The art colour of every text cell for one frame."""
     rows = frame.split("\n")
-    w, h2 = len(rows[0]) * SCALE, len(rows) * SCALE
-    def px(y, x):
-        return rows[y // SCALE][x // SCALE] if y < h2 else "."
-    return [[(px(2 * r, x), px(2 * r + 1, x)) for x in range(w)] for r in range((h2 + 1) // 2)]
+    return [[ch for ch in row for _ in range(SX)] for row in rows for _ in range(SY)]
 
 
 def draw(grid, prev, x0, y0):
     buf = []
     for r, row in enumerate(grid):
-        for c, cell in enumerate(row):
-            if prev is not None and prev[r][c] == cell:
+        c = 0
+        while c < len(row):
+            if prev is not None and prev[r][c] == row[c]:
+                c += 1
                 continue
-            top, bot = cell
-            buf.append(f"\033[{y0 + r + 1};{x0 + c + 1}H\033[38;5;{SLOT[top]};48;5;{SLOT[bot]}m"
-                       + ("▀" if top != bot else " "))
+            start, ch = c, row[c]                    # a run of changed cells of one colour
+            while c < len(row) and row[c] == ch and (prev is None or prev[r][c] != ch):
+                c += 1
+            glyph = " " if ch == "." else "█"
+            buf.append(f"\033[{y0 + r + 1};{x0 + start + 1}H{fg(SLOT[ch])}{BG}{glyph * (c - start)}")
     if buf:
         out("".join(buf) + "\033[0m")
 
@@ -89,7 +100,7 @@ def centered(y, cols, parts):
     """parts: [(text, colour slot)] on one line, centred."""
     width = sum(len(t) for t, _ in parts)
     out(f"\033[{y + 1};{max(1, (cols - width) // 2 + 1)}H"
-        + "".join(f"\033[38;5;{slot};48;5;0m{t}" for t, slot in parts) + "\033[0m")
+        + "".join(f"{fg(slot)}{BG}{t}" for t, slot in parts) + "\033[0m")
 
 
 def screen():
@@ -101,7 +112,7 @@ def screen():
     top, bottom = pick_joke()
 
     set_palette()
-    out("\033[?25l\033[0m\033[48;5;0m\033[2J")
+    out("\033[?25l\033[0m" + BG + "\033[2J")
     def text():
         centered(y0 + art_h + 2, cols, [(top, TEXT_TOP)])
         centered(y0 + art_h + 3, cols, [(bottom, TEXT_BOTTOM)])
@@ -120,7 +131,7 @@ def screen():
         if was_closed:                          # lid opened again: new joke, full redraw
             was_closed, prev = False, None
             top, bottom = pick_joke()
-            out("\033[48;5;0m\033[2J"); text()
+            out(BG + "\033[2J"); text()
         g = grids[seq[i]]
         draw(g, prev, x0, y0)
         prev, i = g, (i + 1) % len(seq)
