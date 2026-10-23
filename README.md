@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="design/readme/morzik-banner.gif" width="100%" alt="Morzik, a black 3D cat in a cream headset, waves next to his name while a morse letter blinks">
+<img src="design/readme/morzik-hello.gif" width="100%" alt="Morzik, a black 3D cat in a cream headset, waves next to his name while a morse letter blinks">
 
 **A personal cat assistant in Telegram.** Murzik (a classic Russian cat name) + Morse.
 
