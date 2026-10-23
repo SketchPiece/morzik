@@ -1,0 +1,24 @@
+---
+title: 2 · Путь одного сообщения
+board: 1600x1000
+---
+sequenceDiagram
+  autonumber
+  actor A as пользователь
+  participant T as Telegram
+  participant H as Hermes
+  participant P as morzik-chat
+  participant M as Claude
+  participant X as MCP-серверы
+  A->>T: «что там с доменом?»
+  T->>H: апдейт от бота
+  Note over H: голосовое → текст (OpenAI)
+  H->>M: SOUL, память, скиллы и сообщение
+  M-->>P: «сек, гляну»
+  P-->>A: короткая реплика, если полез в инструменты
+  M->>X: search_threads, get_message…
+  X-->>M: письма, события, брони
+  M->>H: ответ
+  H->>P: фильтр: говорит только Морзик
+  P->>T: разбить на сообщения, «печатает…» перед каждым
+  T->>A: 2–3 коротких сообщения или ссылка на Telegraph

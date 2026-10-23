@@ -1,0 +1,12 @@
+---
+title: 4 · Звонок голосом (в работе)
+board: 1600x800
+---
+flowchart LR
+  user([пользователь<br>Mini App]) -->|1. говорит| el[ElevenLabs агент<br>слух и голос eleven_v4]:::ext
+  el -->|2. Custom LLM| funnel[Tailscale Funnel<br>только /v1/chat/completions]
+  funnel --> proxy[morzik-voice<br>прокси с ключом]
+  proxy --> api[Hermes api_server<br>модель morzik-voice]:::hl
+  api --> haiku[Claude Haiku<br>те же SOUL, память, MCP]:::hl
+  haiku -->|3. ответ| el
+  el -->|4. голосом| user

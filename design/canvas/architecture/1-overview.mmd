@@ -1,0 +1,56 @@
+---
+title: 1 · Морзик целиком
+board: 1800x1100
+---
+flowchart LR
+  user([пользователь<br>Telegram, голос, Mini App])
+
+  subgraph tg [Telegram]
+    bot[Бот @WaveWorkerBot<br>Bot API]
+  end
+
+  subgraph server [sketch-server · домашний Ubuntu в tailnet]
+    hermes[Hermes Agent<br>hermes-gateway]:::hl
+    brain[Мозг<br>Claude Opus по подписке]:::hl
+    soul[Характер и память<br>SOUL.md, memory, skills]
+    plugins[Плагины<br>morzik-chat, voice-mode]
+    cron[Расписания<br>cron, «Подписки»]
+    screen[Свой экран<br>Chrome, computer use, noVNC]
+    semafor[Semafor Server<br>Telegram только чтение]
+  end
+
+  subgraph pieces [pieces.run]
+    email[mcp-email<br>Gmail, iCloud]
+    lotsia[Lotsia<br>поездки и маршруты]
+    helm[Helm MCP<br>helm.pieces.run]
+    hosting[pieces MCP<br>деплой, логи]
+    app[Mini App<br>morzik.pieces.run]
+  end
+
+  subgraph mac [Мак пользователя]
+    bridge[Morzik Bridge<br>Swift, EventKit]
+    cal[(Календарь<br>и Напоминания)]
+    agents[Агенты в Helm<br>Claude, Codex]
+  end
+
+  ext_ai[OpenAI STT<br>ElevenLabs TTS]:::ext
+  telegraph[Telegraph<br>длинные ответы]:::ext
+
+  user <-->|чат| bot
+  bot <==> hermes
+  user -.->|кнопка меню| app
+  hermes <==> brain
+  soul --> hermes
+  plugins --- hermes
+  cron --> hermes
+  hermes --- screen
+  hermes -->|MCP| email
+  hermes -->|MCP| lotsia
+  hermes -->|MCP| helm
+  hermes -->|MCP| hosting
+  hermes -->|MCP, localhost| semafor
+  hermes -->|MCP через tailnet| bridge
+  bridge --> cal
+  helm --> agents
+  hermes -.-> ext_ai
+  hermes -.-> telegraph
