@@ -54,6 +54,9 @@
   <h1>Скоро</h1>
   <p>тут будет всё, что Морзик умеет,<br>а пока у него голова кругом</p>
 <script>
+// Всё внутри функции: Telegram на iPhone встраивает в страницу свой код, и глобальный const с тем же именем
+// (tg, v…) ронял весь этот скрипт ещё до запуска — ни полного экрана, ни цвета шапки, ни видео.
+(() => {
   const tg = window.Telegram && Telegram.WebApp;
   if (tg) try {
     __steps.push('start');
@@ -72,6 +75,7 @@
   v.src = webkit ? 'morzik-dizzy.mov' : 'morzik-dizzy.webm';
   v.addEventListener('playing', () => v.parentElement.classList.add('on'), { once: true });
   v.play().catch(() => {});
+})();
 </script>
 </body>
 </html>
