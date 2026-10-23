@@ -1,13 +1,11 @@
 <div align="center">
 
-<img src="design/avatar/morzik-480.gif" width="220" alt="Морзик — чёрный 3D-кот в кремовой гарнитуре">
+<img src="design/readme/morzik-banner.gif" width="100%" alt="Morzik, a black 3D cat in a cream headset, waves next to his name while a morse letter blinks">
 
-# Морзик
+**A personal cat assistant in Telegram.** Murzik (a classic Russian cat name) + Morse.
 
-**Личный кот-помощник в Telegram.** Мурзик + Морзе.
-
-Почта, напоминания, календарь и мелкие дела — в чате, как с другом.<br>
-Большую работу он передаёт агентам на компьютере.
+Mail, reminders, calendar and small errands, in a chat, like texting a friend.<br>
+Big jobs go to coding agents on the computer.
 
 <sub>· – · · –</sub>
 
@@ -15,64 +13,69 @@
 
 ---
 
-## Какой он
+## What he's like
 
-Чёрный домашний кот в матовой гарнитуре. Говорит просто, без канцелярита и восклицательных знаков, пишет коротко и по одной мысли в сообщении. С виду простачок, на деле ничего не забывает.
+A black house cat in a matte headset. He talks plainly, without officialese or exclamation marks, writes short messages, one thought per message. Looks like a simpleton, forgets nothing.
+
+He speaks Russian; here is a typical exchange in English:
 
 ```
-Пользователь:  поподробнее, че там?
-Морзик:  ща гляну
-Морзик:  не прошёл счёт за домен на $9.99, напоминают уже четвёртый раз
-Морзик:  оплатишь в кабинете или напомнить вечером?
+Me:      more detail, what's up?
+Morzik:  sec, looking
+Morzik:  the domain payment of $9.99 didn't go through, that's the fourth reminder
+Morzik:  will you pay in the dashboard, or should I remind you tonight?
 ```
 
-## Что умеет
+## What he can do
 
 |   |   |
 |---|---|
-| ✉️ **Почта** | Видит каждое новое письмо сразу, сам решает, о чём сказать, а что тихо пометить прочитанным. |
-| 📅 **Календарь и Напоминания** | Работает с нативными Календарём и Напоминаниями Apple на Маке через свой мост. |
-| 🧭 **Helm** | Код, проекты и долгие исследования передаёт агентам в Helm на компьютере. |
-| 📰 **Длинные ответы** | Инструкции и разборы не вываливает в чат, а публикует статьёй Telegraph и присылает ссылку. |
-| 🎙 **Голосовые** | Понимает голосовые и может ответить голосом. |
-| 🐾 **Сам первым** | Замечает важное и пишет без запроса; повторяющееся предлагает сделать задачей по расписанию. |
+| ✉️ **Mail** | Sees every new email right away and decides himself what to mention and what to quietly mark as read. |
+| 📅 **Calendar and Reminders** | Works with the native Apple Calendar and Reminders on the Mac through his own bridge. |
+| 🧭 **Helm** | Hands code, projects and long research to agents in Helm on the computer. |
+| 📰 **Long answers** | Doesn't dump guides and write-ups into the chat: publishes them as a Telegraph article and sends the link. |
+| 🎙 **Voice** | Understands voice messages and can answer by voice. |
+| 🐾 **Speaks first** | Notices what matters and writes without being asked; offers to turn recurring things into scheduled tasks. |
 
-## Приложение
+## The app
 
-<img src="webapp/public/morzik-dizzy.png" width="160" align="right" alt="Голова Морзика с глазами-спиральками">
+<img src="webapp/public/morzik-dizzy.png" width="160" align="right" alt="Morzik's head with spiral eyes">
 
-Кнопка «Морзик» слева от поля ввода открывает его приложение на весь экран. Сейчас там экран «Скоро» с головой Морзика, у которой от всех планов глаза крутятся спиральками. Сюда будут переезжать функции, которым тесно в чате.
+The «Morzik» button left of the message field opens his full-screen app. For now it's a «Coming soon» screen with Morzik's head, eyes spinning from all the plans. Features that outgrow the chat will move here.
 
 **[morzik.pieces.run](https://morzik.pieces.run)**
 
 <br clear="right">
 
-## Из чего сделан
+## What he's made of
 
-| Часть | Где | Что это |
+| Part | Where | What it is |
 |---|---|---|
-| Мозг | [Hermes Agent](https://github.com/NousResearch/hermes-agent) на Маке | Модель, память, инструменты, расписание, Telegram |
-| Характер | `~/.hermes/SOUL.md` | Как говорит и как себя ведёт |
-| Манеры в чате | `~/.hermes/plugins/morzik-chat` | Разбивка на сообщения, «печатает…» по делу, «ща» перед поиском, `/restart`, `/clean` |
-| Apple | [`bridge/`](bridge) | MCP-сервер на Swift для Календаря и Напоминаний |
-| Внешность | [`design/`](design) | 3D-модель на three.js, холсты с вариантами, рендер аватарки |
-| Приложение | [`webapp/`](webapp) | Telegram Mini App на [pieces.run](https://pieces.run) |
+| Brain | [Hermes Agent](https://github.com/NousResearch/hermes-agent) on a Mac | Model, memory, tools, scheduling, Telegram |
+| Character | `~/.hermes/SOUL.md` | How he talks and behaves |
+| Chat manners | `~/.hermes/plugins/morzik-chat` | Splitting replies into messages, «typing…» only when it fits, «sec» before a lookup, `/restart`, `/clean` |
+| Apple | [`bridge/`](bridge) | MCP server in Swift for Calendar and Reminders |
+| Looks | [`design/`](design) | three.js 3D model, design canvases with variants, avatar rendering |
+| App | [`webapp/`](webapp) | Telegram Mini App on [pieces.run](https://pieces.run) |
 
-Сам бот с ключами и токенами живёт в `~/.hermes` и в репозиторий не входит.
+The bot itself, with its keys and tokens, lives in `~/.hermes` and is not part of this repository.
 
-## Внутри репозитория
+## In this repository
 
 ```
-bridge/        Morzik Bridge — Календарь и Напоминания Apple по MCP
+bridge/        Morzik Bridge: Apple Calendar and Reminders over MCP
 design/
-  avatar/      рендер анимированной аватарки (MP4, GIF, PNG)
-  canvas/      холсты: выбор персонажа, приложение вместо меню
+  avatar/      animated avatar render (MP4, GIF, PNG)
+  canvas/      design canvases: picking the character, an app instead of a menu, the login screen
+  readme/      the banner at the top of this page
+greeter/       jokes for the login screen
+voice/         latency bench for the voice endpoint
 webapp/
-  public/      страница приложения и видео головы с прозрачным фоном
-  render/      рендер этого видео из 3D-модели
-docs/notes.md  подробно, как всё устроено и настроено
+  public/      the app page and the head video with a transparent background
+  render/      rendering that video from the 3D model
+docs/notes.md  how everything is built and configured, in detail
 ```
 
-Подробности по каждой части, командам пересборки и настройкам — в **[docs/notes.md](docs/notes.md)**.
+Details on each part, rebuild commands and settings are in **[docs/notes.md](docs/notes.md)** (in Russian).
 
 <div align="center"><sub>🐈‍⬛</sub></div>
