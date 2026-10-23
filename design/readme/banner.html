@@ -8,7 +8,8 @@
   html, body { margin: 0; background: #10172C }
   .banner { position: relative; width: 960px; height: 380px; overflow: hidden; color: #fff; font-family: Inter, system-ui, sans-serif; -webkit-font-smoothing: antialiased;
     background: radial-gradient(520px 420px at 200px 180px, #34477C, #10172C) }
-  canvas { position: absolute; left: 10px; top: 0; width: 380px; height: 380px }
+  #gl { display: none }
+  #out { position: absolute; left: 10px; top: 0; width: 380px; height: 380px }
   .text { position: absolute; left: 400px; top: 108px }
   h1 { margin: 0; font-family: Unbounded, Inter, sans-serif; font-weight: 600; font-size: 64px; letter-spacing: -.01em }
   p { margin: 14px 0 0; font-size: 22px; color: #C9D2EE }
@@ -19,7 +20,8 @@
 </head>
 <body>
 <div class="banner">
-  <canvas id="c"></canvas>
+  <canvas id="gl"></canvas>
+  <canvas id="out" width="760" height="760"></canvas>
   <div class="text">
     <h1>Morzik</h1>
     <p>A personal cat assistant in Telegram</p>
@@ -28,25 +30,64 @@
 </div>
 <script src="../canvas/morzik-character/_cat2.bundle.js"></script>
 <script>
-// Morzik with his floating paws (he waves at 5.3–6.9 s), the morse «·–··–» (the same letter as his whiskers) is tapped out once per loop and then glows.
+// Morzik climbs out of a flat digital ring, like a character popping out of a frame in an ad: the ring's back arc
+// is behind him, everything below the ring is cut off, the front arc is drawn over him. No paws; he looks to the
+// right (towards the name) and squints only a little, as an easter egg. The morse «·–··–» (his whisker letter)
+// is tapped out once per loop next to the name and runs around the ring.
 // Without ?t this is the live animation; render.cjs calls window.frameAt(t) for each frame.
-const c = document.getElementById('c');
-const r = morzikCat2(c, { size: 380, manual: true, transparent: true, paws: 'float', zoom: .72 });
+const q = new URLSearchParams(location.search), num = (k, d) => +(q.get(k) ?? d);
+const gl = document.getElementById('gl'), out = document.getElementById('out'), x = out.getContext('2d');
+const r = morzikCat2(gl, { size: 380, manual: true, transparent: true, zoom: num('zoom', .85), shiftY: num('shift', -.15), cross: num('cross', .3) });
+// The ring, in pixels of the 760×760 output canvas.
+const R = { cx: num('cx', 380), cy: num('cy', 560), rx: num('rx', 240), ry: num('ry', 80), rot: num('rot', 8) * Math.PI / 180 };
+const AMBER = '#FFB43A';
+const ellipse = (rx = R.rx, ry = R.ry, a0 = 0, a1 = Math.PI * 2) => { x.beginPath(); x.ellipse(R.cx, R.cy, rx, ry, R.rot, a0, a1); };
+// Morse ·–··– repeated around the ring as dashes: lengths in units, one unit gap between marks, three between letters.
+const LETTER = [1, 3, 1, 1, 3];
+function morseRing(t, rx, ry, glow) {
+  const unit = 9, pattern = [];
+  LETTER.forEach((len, i) => pattern.push(len * unit, i < LETTER.length - 1 ? unit : unit * 3));
+  x.save(); x.setLineDash(pattern); x.lineDashOffset = -t / r.loop * pattern.reduce((a, b) => a + b) * 3;
+  x.lineCap = 'round'; x.lineWidth = 5; x.strokeStyle = AMBER; x.globalAlpha = glow; x.shadowColor = AMBER; x.shadowBlur = 14;
+  ellipse(rx, ry); x.stroke(); x.restore();
+}
+function ring(t, front) {
+  // front: the half of the ring nearer to us (lower arc); otherwise the far half.
+  const a0 = front ? 0 : Math.PI, a1 = front ? Math.PI : Math.PI * 2;
+  x.save();
+  x.beginPath(); x.ellipse(R.cx, R.cy, R.rx + 40, R.ry + 40, R.rot, a0, a1); x.lineTo(R.cx, R.cy); x.closePath(); x.clip();
+  x.lineWidth = 6; x.strokeStyle = AMBER; x.shadowColor = AMBER; x.shadowBlur = 24; ellipse(); x.stroke();
+  x.lineWidth = 2; x.strokeStyle = '#FFE2A8'; x.shadowBlur = 0; ellipse(); x.stroke();
+  morseRing(t, R.rx - 22, R.ry - 14, .7);
+  x.restore();
+}
 const marks = [...document.querySelectorAll('.morse i')];
-const tap = [0, 1, 3, 1, 1, 3];  // lengths of dot / dash in morse units, then the gaps are one unit
 window.loop = r.loop;
 window.frameAt = t => {
   r.frame(t);
+  x.clearRect(0, 0, 760, 760);
+  // Inside of the ring: a faint flat disc, like a screen.
+  x.save(); ellipse(); const g = x.createRadialGradient(R.cx, R.cy, 0, R.cx, R.cy, R.rx);
+  g.addColorStop(0, 'rgba(255,180,58,.18)'); g.addColorStop(1, 'rgba(255,180,58,.04)'); x.fillStyle = g; x.fill(); x.restore();
+  ring(t, false);
+  // Morzik, cut off below the ring: visible inside the ellipse and everywhere above its long axis.
+  x.save(); x.beginPath();
+  x.ellipse(R.cx, R.cy, R.rx, R.ry, R.rot, 0, Math.PI * 2, true);  // same winding as the half-plane below, so they add up
+  const c = Math.cos(R.rot), s = Math.sin(R.rot), far = 2000;
+  x.moveTo(R.cx - c * far, R.cy - s * far); x.lineTo(R.cx + c * far, R.cy + s * far);
+  x.lineTo(R.cx + c * far + s * far, R.cy + s * far - c * far); x.lineTo(R.cx - c * far + s * far, R.cy - s * far - c * far); x.closePath();
+  if (!q.has('noclip')) x.clip('nonzero');
+  x.drawImage(gl, 0, 0, 760, 760); x.restore();
+  ring(t, true);
   const unit = .28, start = .6;
   let at = start;
-  marks.forEach((m, i) => {
+  marks.forEach(m => {
     const len = (m.classList.contains('dash') ? 3 : 1) * unit, on = t >= at && t < at + len;
     const after = t >= at + len, hold = t > start + 12 * unit && t < r.loop - .8;
     m.style.opacity = on ? 1 : hold ? .85 : after && t < r.loop - .8 ? .5 : .25;
     at += len + unit;
   });
 };
-const q = new URLSearchParams(location.search);
 if (q.get('t') != null) frameAt(+q.get('t'));
 else if (!q.has('manual')) { const t0 = performance.now(); const tick = now => { frameAt(((now - t0) / 1000) % r.loop); requestAnimationFrame(tick); }; requestAnimationFrame(tick); }
 </script>
