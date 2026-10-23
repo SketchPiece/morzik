@@ -14,7 +14,8 @@
   body {
     background: radial-gradient(120% 70% at 50% 34%, #34477C 0%, #1a2342 55%, #10172C 100%);
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    padding: calc(24px + var(--tg-safe-area-inset-top, 0px)) 24px calc(56px + var(--tg-safe-area-inset-bottom, 0px));
+    /* In fullscreen Telegram draws its Close and ⋯ buttons over the page: the content safe area keeps clear of them. */
+    padding: calc(24px + var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px)) 24px calc(56px + var(--tg-safe-area-inset-bottom, 0px) + var(--tg-content-safe-area-inset-bottom, 0px));
     text-align: center; user-select: none; -webkit-user-select: none;
   }
   .cat { position: relative; width: min(82vw, 46vh, 360px); aspect-ratio: 1; pointer-events: none }
@@ -31,7 +32,11 @@
   <p>тут будет всё, что Морзик умеет,<br>а пока у него голова кругом</p>
 <script>
   const tg = window.Telegram && Telegram.WebApp;
-  if (tg) { tg.ready(); tg.expand(); tg.setHeaderColor('#10172C'); tg.setBackgroundColor('#10172C'); tg.setBottomBarColor?.('#10172C'); }
+  if (tg) {
+    tg.ready(); tg.expand(); tg.setHeaderColor('#10172C'); tg.setBackgroundColor('#10172C'); tg.setBottomBarColor?.('#10172C');
+    // Full screen on phones (Bot API 8.0+); on a Mac or PC it would take over the whole monitor, so there it stays a window.
+    if (['ios', 'android'].includes(tg.platform) && tg.isVersionAtLeast?.('8.0')) tg.requestFullscreen();
+  }
 
   // Голова — видео с прозрачным фоном: Safari и Telegram на iPhone/Mac (WebKit) показывают прозрачность только у HEVC,
   // Chrome и Telegram на Android — у VP9 WebM. Пока видео грузится, стоит первый кадр картинкой.
