@@ -1,0 +1,29 @@
+---
+title: 3 · Как Морзик пишет первым
+board: 1600x900
+---
+flowchart LR
+  subgraph sources [Серверы сообщают о событиях · MCP Events]
+    mail[mcp-email<br>email.received]
+    trips[Lotsia<br>checkin.opening, itinerary.upcoming,<br>booking.attention]
+    tg[Semafor<br>telegram.message_received]
+  end
+
+  poll{{cron «Подписки»<br>раз в минуту, mcp_events.py}}:::hl
+  subs[(subscriptions/*.md<br>что делать с событием)]
+  quiet([тихо, модель не запускается])
+  morzik[Морзик решает]:::hl
+
+  say[Пишет пользователю]
+  act[Действует сам<br>правит Lotsia, ставит напоминание]
+  skip[Молча помечает прочитанным]
+
+  mail --> poll
+  trips --> poll
+  tg -.->|подписки пока нет| poll
+  poll -->|нет событий| quiet
+  poll ==>|есть события| morzik
+  subs --> morzik
+  morzik --> say
+  morzik --> act
+  morzik --> skip
