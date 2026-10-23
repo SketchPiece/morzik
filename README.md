@@ -50,7 +50,7 @@
 - Доступ: при первом запуске macOS спрашивает про Календарь и Напоминания. Потом настройки в System Settings → Privacy & Security → Calendars / Reminders, пункт Morzik Bridge. Без доступа инструменты отвечают ошибкой «No access», а `status` показывает состояние.
 - Слушает `127.0.0.1:8765`, путь `/mcp`, без токена отвечает 401. Токен лежит в `~/.config/morzik-bridge/token`, адрес и порт — в `~/.config/morzik-bridge/env`. `GET /health` работает без токена.
 - Инструменты: `status`, `calendar_list_calendars`, `calendar_list_events`, `calendar_create_event`, `calendar_update_event`, `calendar_delete_event`, `reminders_list_lists`, `reminders_list`, `reminders_create`, `reminders_update`, `reminders_complete`, `reminders_delete`. Время без смещения считается временем Мака. Если у напоминания указано время, мост ставит на него будильник, иначе Напоминания не присылают уведомление.
-- В Hermes: `config.yaml` → `mcp_servers.apple` (`http://127.0.0.1:8765/mcp`, заголовок `Authorization: ${MORZIK_BRIDGE_AUTH}` из `~/.hermes/.env`). Скилл `skills/personal/apple-calendar` объясняет, когда ставить напоминание в Apple, а когда свой cron. Стоковый `apple-reminders` (через `remindctl`) выключен.
+- В Hermes: `config.yaml` → `mcp_servers.apple` (`http://127.0.0.1:8765/mcp`, заголовок `Authorization: ${MORZIK_BRIDGE_AUTH}` из `~/.hermes/.env`). Скилл `skills/personal/apple-calendar` объясняет, когда ставить напоминание в Apple, а когда свой cron; календарь и список Напоминаний Морзик выбирает по смыслу дела и по тому, где лежат похожие, а не по умолчанию. Стоковый `apple-reminders` (через `remindctl`) выключен.
 
 ### Когда Морзик переедет на Linux
 
