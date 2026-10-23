@@ -47,7 +47,7 @@
 
 - службы — systemd user units пользователя `morzik`: `hermes-gateway` (Telegram, cron, api_server; видит экран `DISPLAY=:1`), `morzik-voice` (голосовой прокси), `morzik-screen` (TigerVNC 1440×900), `morzik-wm` (Openbox), `morzik-chrome` (Chrome с профилем `~/.config/morzik-chrome`, CDP на `127.0.0.1:9222`), `morzik-novnc`. Управлять: `sudo -u morzik XDG_RUNTIME_DIR=/run/user/$(id -u morzik) systemctl --user …`, лог шлюза — `/home/morzik/.hermes/logs/gateway.log`.
 - экран Морзика смотреть и входить в аккаунты — noVNC `https://sketch-server.tail923acf.ts.net:6080/vnc.html` (только tailnet, пароль: `sudo cat /home/morzik/.vnc/password.txt` на сервере). Браузер (Browser Use, `browser_exec`) и computer use (cua-driver) работают в этом же Chrome на этом же экране, так что входы, сделанные руками, Морзик видит.
-- Semafor: `mcp_servers.semafor` — это `ssh` на Мак ключом `~/.ssh/semafor_mac`, которому в `~/.ssh/authorized_keys` Мака разрешено только запускать `semafor-mcp` (forced command, `from=` адрес сервера в tailnet, `restrict`).
+- Telegram: `mcp_servers.semafor` — Semafor Server на этом же сервере (`http://127.0.0.1:8790/mcp`, заголовок `Authorization: ${SEMAFOR_MCP_AUTH}` из `.env`), с 23.10.2026. Это отдельный headless-клиент Telegram только для чтения, от Мака не зависит; подробнее в разделе «Telegram (Semafor Server)». До этого был `ssh` на Мак ключом `~/.ssh/semafor_mac` к `semafor-mcp` из Semafor (forced command в `authorized_keys` Мака); ключ остался, старый блок — в `config.yaml.bak-2026-10-23-before-semafor-server`.
 - Календарь и Напоминания: `mcp_servers.apple.url` = `https://<mac>.tail923acf.ts.net:8765/mcp` (мост открыт в tailnet через `tailscale serve` на Маке).
 - часовой пояс сервера — <local tz>, как у расписаний.
 - у бота свой вход в Claude (подписка) — Claude Code пользователя `morzik`.
@@ -63,6 +63,7 @@
   - Задача cron «Подписки» (`6b373df40d0d`, раз в минуту, скилл `subscriptions`) запускает `scripts/mcp_events.py`. Скрипт опрашивает все подписки и будит Морзика, только если пришли события или подписка сломалась либо снова заработала. В тихие минуты модель не запускается. Курсоры лежат в `state/subscriptions/<id>.json`. Если агент упадёт посреди разбора, пачка событий не повторится.
   - `python3 ~/.hermes/scripts/mcp_events.py status` показывает подписки и их состояние. `… events <server>` показывает, на что у сервера можно подписаться.
   - Подписки: `mail` (`email.received` от `email`) — сервер присылает каждое входящее письмо без сортировки, Морзик сам решает, что важно сказать пользователю, а что пометить прочитанным; три подписки на поездки от `lotsia` (см. «Поездки (Lotsia)»).
+  - `semafor` тоже умеет события: `telegram.message_received` (см. «Telegram (Semafor Server)»). Подписки на него пока нет.
   - Ограничения: пока только HTTP-серверы с заголовком авторизации (не stdio, не OAuth). Скрипт нужен, потому что Hermes ещё не умеет MCP Events сам. Когда научится или Морзик переедет на сервер, скрипт заменит прямая подписка (вебхук).
 - `plugins/morzik-voice-status/` — пока Морзик думает, в чате тихо: «печатает…», которое Hermes шлёт весь ход, глушится. «Записывает голосовое…» показывается только пока работает `text_to_speech`.
 - Голосовые: `config.yaml` → `stt` — OpenAI `gpt-4o-transcribe`, язык `ru`, расшифровка в чат не дублируется (`echo_transcripts: false`); ключ `OPENAI_API_KEY` в `~/.hermes/.env`.
@@ -93,6 +94,18 @@
   - `lotsia-upcoming` — `itinerary.upcoming`, за 24 ч до вылета, получения и сдачи машины, заселения.
   - `lotsia-attention` — `booking.attention`: за 21 день до начала брони, которая всё ещё `idea` или `agreed`.
 - Об изменениях броней событий нет: о них Морзик узнаёт из почты сам.
+
+## Telegram (Semafor Server)
+
+Telegram пользователя Морзик читает через [semafor-server](../../semafor-server) (`~/Documents/Projects/semafor-server`, там README со всеми подробностями): headless-клиент на Python + Telethon, своя сессия Telegram «Semafor Server» (видна в Telegram → Настройки → Устройства), работает на sketch-server. Те же инструменты, что у MCP в Semafor на Маке, но Мак для этого не нужен.
+
+- Только чтение, и это обеспечено ниже инструментов: любой запрос к Telegram, кроме методов чтения из белого списка, отбрасывается до сети. Отправить, отредактировать, удалить, поставить реакцию, вступить или пометить прочитанным нельзя. Чтение истории не трогает счётчики непрочитанного (проверено: 245 до и после чтения 50 сообщений).
+- Служба `semafor-server` (systemd, системный пользователь `semafor`). Сессия лежит в `/var/lib/semafor-server` (0700), у пользователя `morzik` доступа к ней нет. Морзик получает только HTTP на `127.0.0.1:8790` и токен (`SEMAFOR_MCP_AUTH` в `.env`).
+- Управление на сервере: `sudo semafor-server status | enable | disable | media on|off | lock | unlock | log [N] | token --new`. `lock` останавливает всё сразу, как passcode lock на Маке. Каждый вызов пишется в лог. После `token --new` надо обновить `SEMAFOR_MCP_AUTH` и перезапустить шлюз.
+- Сейчас включены доступ и файлы, как в Semafor на Маке. `get_media` отдаёт файл прямо в ответе: фото как картинку, голосовые как аудио, остальное как файл до 40 МБ. Hermes сохраняет его к себе в кэш.
+- `chat_id` в формате Bot API (`-100…` у каналов и супергрупп), с id из Semafor на Маке не совпадают. `@username` работает везде.
+- События (MCP Events, poll): `telegram.message_received` — новое входящее сообщение. Аргументы подписки: `chats` (список chat_id или @username), `private` (все личные чаты с людьми, кроме ботов, архива и чатов без звука), `mentions` (упоминания и ответы пользователю в группах). Сервер присылает всё подряд, что важно, решает Морзик. Подписки пока нет; добавить — файл `subscriptions/<id>.md` с `server: semafor`, `event: telegram.message_received`, `arguments: {"private": true, "mentions": true}`.
+- Обновить сервер: `deploy/deploy.sh` из репозитория semafor-server на Маке.
 
 ## Календарь и Напоминания Apple (Morzik Bridge)
 
