@@ -13,12 +13,21 @@
   function __diag(tag) {
     const t = window.Telegram && Telegram.WebApp, d = { tag, hash: location.hash.slice(0, 120), proxy: !!window.TelegramWebviewProxy, errs: __errs };
     if (t) Object.assign(d, { v: t.version, pl: t.platform, init: (t.initData || '').length, exp: t.isExpanded, fs: t.isFullscreen, vh: t.viewportHeight, vsh: t.viewportStableHeight });
+    d.out = __out; d.in = __in; d.steps = __steps;
     new Image().src = '/diag?' + encodeURIComponent(JSON.stringify(d));
   }
-  setTimeout(() => __diag('t0'), 50); setTimeout(() => __diag('t2'), 2000);
+  // Что страница шлёт в Telegram и что Telegram присылает обратно.
+  window.__out = []; window.__in = []; window.__steps = [];
+  const px = window.TelegramWebviewProxy;
+  if (px && px.postEvent) { const orig = px.postEvent.bind(px); try { px.postEvent = (e, d) => { __out.push(e); return orig(e, d); }; } catch (err) { __errs.push('wrap ' + err); } }
+  __out.push('proxyWrapped=' + !!(px && px.postEvent));
+  setTimeout(() => __diag('t2'), 2000); setTimeout(() => __diag('t6'), 6000);
 </script>
 <!-- Копия telegram-web-app.js лежит рядом, чтобы запуск не ждал telegram.org. -->
 <script src="telegram-web-app.js"></script>
+<script>
+  if (window.Telegram && Telegram.WebView) { const r = Telegram.WebView.receiveEvent; Telegram.WebView.receiveEvent = (e, d) => { __in.push(e + (d ? ' ' + JSON.stringify(d).slice(0, 80) : '')); try { return r(e, d); } catch (err) { __errs.push('recv ' + e + ': ' + err.message); throw err; } }; }
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <!-- Шрифты не блокируют страницу: пока стили не пришли, нижний скрипт (полный экран, цвета) не выполнялся бы. -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=Unbounded:wght@600&display=swap" media="print" onload="this.media='all'">
@@ -46,12 +55,14 @@
   <p>тут будет всё, что Морзик умеет,<br>а пока у него голова кругом</p>
 <script>
   const tg = window.Telegram && Telegram.WebApp;
-  if (tg) {
-    tg.ready(); tg.expand(); tg.setHeaderColor('#10172C'); tg.setBackgroundColor('#10172C'); tg.setBottomBarColor?.('#10172C');
-    // Full screen on phones (Bot API 8.0+); on a Mac or PC it would take over the whole monitor, so there it stays a window.
-    if (['ios', 'android'].includes(tg.platform) && tg.isVersionAtLeast?.('8.0')) tg.requestFullscreen();
+  if (tg) try {
+    __steps.push('start');
     tg.onEvent?.('fullscreenFailed', e => { __errs.push('fsFailed ' + (e && e.error)); __diag('fsfail'); });
-  }
+    tg.ready(); __steps.push('ready'); tg.expand(); __steps.push('expand');
+    tg.setHeaderColor('#10172C'); tg.setBackgroundColor('#10172C'); tg.setBottomBarColor?.('#10172C'); __steps.push('colors');
+    // Full screen on phones (Bot API 8.0+); on a Mac or PC it would take over the whole monitor, so there it stays a window.
+    if (['ios', 'android'].includes(tg.platform) && tg.isVersionAtLeast?.('8.0')) { tg.requestFullscreen(); __steps.push('fs'); }
+  } catch (err) { __errs.push('main ' + err.message); }
 
   // Голова — видео с прозрачным фоном: Safari и Telegram на iPhone/Mac (WebKit) показывают прозрачность только у HEVC,
   // Chrome и Telegram на Android — у VP9 WebM. Пока видео грузится, стоит первый кадр картинкой.
