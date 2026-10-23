@@ -8,7 +8,8 @@ order), so the palette in pixel.py becomes the console's own. Only the classic S
 read that palette (30-37, bold for 8-15; 38;5;n is mapped to fixed colours instead), and
 only 8 of them work as backgrounds, so every pixel is drawn as foreground █ blocks on the
 navy background (slot 0). The console font has █ but not ▀/▄, so pixels are whole cells:
-SX columns by SY rows, 4×2 = a square 32 px pixel with the 8×16 font.
+SX columns by SY rows; 2×1 is a square 24 px pixel with the 12×24 Terminus font the
+server's console uses (sketch-server, setup/50-greeter.sh).
 """
 import glob, os, random, select, sys, termios, time, tty
 from pathlib import Path
@@ -16,7 +17,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from pixel import FPS, PALETTE, timeline
 
-SX, SY = 4, 2
+SX, SY = 2, 1
 JOKES = Path(os.environ.get("MORZIK_GREETER_JOKES", "/usr/local/share/morzik-greeter/jokes.tsv"))
 RECENT = Path("/var/lib/morzik-greeter/recent")
 AGETTY = ["/usr/sbin/agetty", "--noreset", "--noclear",
