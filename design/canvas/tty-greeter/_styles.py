@@ -3,6 +3,7 @@ import html, pathlib, sys
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from _pixel_head import grid as pixel_grid
 from _build import face, CSS as LINE_CSS
+from _pixel_v2 import build as avatar_grid, PALETTE as AV
 
 HERE = pathlib.Path(__file__).parent
 VGA = {"G": "#555555", "g": "#aaaaaa", "P": "#ff55ff", "W": "#ffffff", "O": "#aa5500", "Y": "#ffff55",
@@ -11,8 +12,9 @@ VGA = {"G": "#555555", "g": "#aaaaaa", "P": "#ff55ff", "W": "#ffffff", "O": "#aa
 
 def esc(s): return html.escape(s)
 
-def pixels(rows, size=12):
-    cells = "".join(f'<i style="background:{VGA[ch]}"></i>' if ch != "." else "<i></i>" for r in rows for ch in r)
+def pixels(rows, size=12, pal=None):
+    pal = pal or VGA
+    cells = "".join(f'<i style="background:{pal[ch]}"></i>' if ch != "." else "<i></i>" for r in rows for ch in r)
     return f'<div class="pix" style="grid-template-columns:repeat({len(rows[0])},{size}px);grid-auto-rows:{size}px">{cells}</div>'
 
 def halfblocks(rows):
@@ -164,5 +166,14 @@ e = page("Д · Окно в стиле BIOS",
 .btn{background:#00aaaa;color:#000;padding:2px 14px;box-shadow:8px 8px 0 #000}.btn u{color:#fff;text-decoration:none}
 .bar{position:absolute;left:0;right:0;bottom:0;background:#aaaaaa;color:#000;font-family:"JetBrains Mono",monospace;font-size:18px;padding:4px 16px;white-space:pre}.bar b{color:#aa0000;font-weight:400}""")
 
-for name, doc in [("0-now.html", now), ("a-pixel.html", a), ("b-status.html", b), ("c-rounded.html", c), ("d-banner.html", d), ("e-dos.html", e)]:
+def joke_av(top, bottom):
+    return (f'<pre class="txt"><b style="color:#ece8df">{esc(top)}</b>\n<b style="color:#8f8aa6">{esc(bottom)}</b>\n\n'
+            f'<b style="color:#ffa21f">Enter</b><b style="color:#8f8aa6"> — войти</b></pre>')
+AV_BG = f"html,body{{background:{AV['.']}}}"
+a2 = page("А2 · Пиксель-арт в цветах авы",
+    f'<main>{pixels(avatar_grid(), 11, AV)}{joke_av("морзик занят: думает", "иногда о почте, чаще о рыбе")}</main>', AV_BG)
+a3 = page("А3 · То же, только голова",
+    f'<main>{pixels(avatar_grid()[:29], 12, AV)}{joke_av("тут живёт морзик", "пароль не скажу, даже за вкусняшку")}</main>', AV_BG)
+
+for name, doc in [("a2-avatar.html", a2), ("a3-avatar-head.html", a3), ("0-now.html", now), ("a-pixel.html", a), ("b-status.html", b), ("c-rounded.html", c), ("d-banner.html", d), ("e-dos.html", e)]:
     (HERE / name).write_text(doc)
