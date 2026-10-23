@@ -40,3 +40,23 @@
 - Голосовые: `config.yaml` → `stt` — OpenAI `gpt-4o-transcribe`, язык `ru`, расшифровка в чат не дублируется (`echo_transcripts: false`); ключ `OPENAI_API_KEY` в `~/.hermes/.env`.
 - Без системных сообщений Hermes в Telegram: `platforms.telegram.gateway_restart_notification: false` (нет «restarting» / «online»), `display.platforms.telegram`: `suppress_warning_notifications: true`, `long_running_notifications: false`, `cleanup_progress: true`. Ответы «⚡ Interrupting current task» выключены (`display.busy_ack_enabled: false`), одноразовые подсказки Hermes помечены показанными (`onboarding.seen`, `onboarding.profile_build: off`). Плашку `/new` («✨ Session reset!» с моделью и подсказкой) режет плагин `morzik-chat`; `/clean` теперь переписывается в `/new` без заголовка. `/start` от пользователя плагин превращает в просьбу коротко поздороваться: Морзик отвечает приветствием своими словами (сам Hermes `/start` игнорирует).
 - Перезапуск после правок: `hermes gateway restart`.
+
+## Календарь и Напоминания Apple (Morzik Bridge)
+
+`bridge/` — маленький MCP-сервер на Swift (EventKit), через который Морзик работает с нативными Календарём и Напоминаниями на Маке. Он сделан отдельным сервером, а не скриптом внутри Hermes, чтобы Морзик мог переехать на Linux и дальше ходить к Маку по сети.
+
+- Установка и пересборка: `bridge/install.sh`. Скрипт собирает `~/Applications/MorzikBridge.app`, подписывает его сертификатом Apple Development (иначе разрешение на Календарь слетает при каждой пересборке) и запускает LaunchAgent `dev.sketchpiece.morzik-bridge`. Лог — `~/Library/Logs/morzik-bridge.log`.
+- Доступ: при первом запуске macOS спрашивает про Календарь и Напоминания. Потом настройки в System Settings → Privacy & Security → Calendars / Reminders, пункт Morzik Bridge. Без доступа инструменты отвечают ошибкой «No access», а `status` показывает состояние.
+- Слушает `127.0.0.1:8765`, путь `/mcp`, без токена отвечает 401. Токен лежит в `~/.config/morzik-bridge/token`, адрес и порт — в `~/.config/morzik-bridge/env`. `GET /health` работает без токена.
+- Инструменты: `status`, `calendar_list_calendars`, `calendar_list_events`, `calendar_create_event`, `calendar_update_event`, `calendar_delete_event`, `reminders_list_lists`, `reminders_list`, `reminders_create`, `reminders_update`, `reminders_complete`, `reminders_delete`. Время без смещения считается временем Мака. Если у напоминания указано время, мост ставит на него будильник, иначе Напоминания не присылают уведомление.
+- В Hermes: `config.yaml` → `mcp_servers.apple` (`http://127.0.0.1:8765/mcp`, заголовок `Authorization: ${MORZIK_BRIDGE_AUTH}` из `~/.hermes/.env`). Скилл `skills/personal/apple-calendar` объясняет, когда ставить напоминание в Apple, а когда свой cron. Стоковый `apple-reminders` (через `remindctl`) выключен.
+
+### Когда Морзик переедет на Linux
+
+Мост остаётся на Маке, мы только открываем его в tailnet, наружу в интернет он не торчит:
+
+1. На Маке: `tailscale serve --bg --https=8765 http://127.0.0.1:8765`. Мост будет доступен по адресу `https://<mac>.<tailnet>.ts.net:8765/mcp` только с устройств в tailnet.
+2. Linux-сервер подключить к тому же tailnet.
+3. В `config.yaml` Морзика поменять `mcp_servers.apple.url` на этот адрес, а `MORZIK_BRIDGE_AUTH` перенести в `.env` на сервере. Токен остаётся тем же.
+
+Мак при этом должен быть включён и залогинен: EventKit работает только в сессии пользователя. Если мост не отвечает, Морзик так и говорит.
