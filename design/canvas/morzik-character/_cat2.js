@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
-export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [], manual = false, shiftY = 0 } = {}) {
+export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [], manual = false, shiftY = 0, tailSide = 1, twitchEar = 1 } = {}) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
   renderer.setPixelRatio(2); renderer.setSize(size, size, false);
   renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
@@ -30,9 +30,10 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
   // Тело, лапки, хвост.
   const body = sph(.95, furM, V(0, -1.55, -.2), [1, .88, .82], cat);
   [-1, 1].forEach(sx => sph(.24, furM, V(sx * .36, -2.18, .5), [1, .7, 1.2], cat));
-  const tail = new THREE.Group(); tail.position.set(.7, -1.85, -.4); cat.add(tail);
+  // tailSide = -1 сажает хвост с другой стороны (ава отзеркалена при сборке, а хвост должен остаться справа).
+  const tail = new THREE.Group(); tail.position.set(.7 * tailSide, -1.85, -.4); cat.add(tail);
   // Хвост с круглым кончиком, загнутым внутрь.
-  const tailPts = [V(-.2, -.05, -.05), V(.5, .15, .05), V(.74, .72, .2), V(.62, 1.18, .34), V(.42, 1.32, .4)];
+  const tailPts = [V(-.2, -.05, -.05), V(.5, .15, .05), V(.74, .72, .2), V(.62, 1.18, .34), V(.42, 1.32, .4)].map(p => p.setX(p.x * tailSide));
   tube(tailPts, .12, furM, tail);
   tailPts.slice(-1).forEach(p => sph(.12, furM, p, [1, 1, 1], tail));
 
@@ -142,7 +143,8 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     const open = Math.min(blink(t, 1.3), blink(t, 6.4));
     const tk = Math.max(0, Math.min(1, squint)); tongue.visible = gap.visible = tk > .03; gap.scale.x = .07 * tk; tongue.scale.y = .07 * tk; tongue.position.y = tongueY - .06 * tk;
     eyes.forEach(E => { E.lid.scale.y = Math.max(.06, open); E.pupil.position.x = E.pupil.userData.base * squint + look; E.halo.material.opacity = .5 + .5 * g; });
-    ears[1].rotation.z = -.4 + .2 * bump(t, 6.9, .35) - .1 * bump(t, 7.25, .3);
+    // twitchEar: какое ухо дёргается (1 — правое в сцене, -1 — левое; для отзеркаленной авы -1).
+    { const k = twitchEar > 0 ? 1 : -1; ears[k > 0 ? 1 : 0].rotation.z = k * (-.4 + .2 * bump(t, 6.9, .35) - .1 * bump(t, 7.25, .3)); }
     body.scale.y = .88 * (1 + .012 * Math.sin(t / 4 * Math.PI * 2));
     head.rotation.z = .03 * Math.sin(w); head.rotation.y = look * 1.6; head.position.y = .3 + .015 * Math.sin(t / 4 * Math.PI * 2);
     tail.rotation.z = .14 * Math.sin(w + 1);

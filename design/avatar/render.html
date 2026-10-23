@@ -12,7 +12,7 @@
 // ?size=400 даёт кадр 800×800 (pixelRatio 2), ?shift=.35 — насколько опустить кота (для шапки профиля Telegram). Без ?t — живая анимация, с ?t=1.0 — один кадр.
 const q = new URLSearchParams(location.search), size = +(q.get('size') || 400), c = document.getElementById('c');
 c.style.width = c.style.height = size + 'px';
-const r = morzikCat2(c, { size, manual: true, shiftY: +(q.get('shift') ?? .35) });
+const r = morzikCat2(c, { size, manual: true, shiftY: +(q.get('shift') ?? .35), tailSide: +(q.get('tail') ?? -1), twitchEar: +(q.get('ear') ?? -1) });
 window.renderAt = t => { r.frame(t); return c.toDataURL('image/png'); };
 window.loop = r.loop;
 if (q.get('t') != null) r.frame(+q.get('t'));
