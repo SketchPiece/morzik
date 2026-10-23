@@ -1,0 +1,32 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Unbounded:wght@500;600&family=IBM+Plex+Mono:wght@500&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:390px;height:844px;overflow:hidden;font-family:Inter,system-ui,sans-serif;color:#fff;background:#0f0f0f;-webkit-font-smoothing:antialiased}
+.status{height:47px;display:flex;align-items:center;justify-content:space-between;padding:0 28px 0 34px;font-weight:600;font-size:16px}
+.status .r{display:flex;gap:6px;align-items:center}
+.status .r i{display:block;width:24px;height:11px;border:1.5px solid #fff;border-radius:3px;position:relative}
+.status .r i:after{content:"";position:absolute;inset:1.5px;right:5px;background:#fff;border-radius:1px}
+/* Telegram chat */
+.top{display:flex;align-items:center;gap:10px;padding:6px 12px 10px;background:#1c1c1d;border-bottom:1px solid #000}
+.top .back{color:#E8742F;font-size:17px;display:flex;align-items:center;gap:2px;width:70px}
+.top .who{flex:1;text-align:center;line-height:1.2}
+.top .who b{display:block;font-size:16px;font-weight:600}
+.top .who span{font-size:12.5px;color:#8d8d93}
+.top img{width:38px;height:38px;border-radius:50%}
+.chat{position:absolute;top:104px;bottom:84px;left:0;right:0;padding:12px 10px;display:flex;flex-direction:column;justify-content:flex-end;gap:5px;background:#0f0f0f}
+.b{max-width:76%;padding:7px 11px 7px;border-radius:17px;font-size:15.5px;line-height:1.3;position:relative}
+.b small{font-size:11px;opacity:.55;margin-left:8px;float:right;margin-top:6px}
+.in{background:#262628;align-self:flex-start;border-bottom-left-radius:5px}
+.out{background:#D9622B;align-self:flex-end;border-bottom-right-radius:5px}
+.bar{position:absolute;left:0;right:0;bottom:0;height:84px;background:#1c1c1d;display:flex;align-items:flex-start;gap:8px;padding:9px 10px 0}
+.bar .field{flex:1;height:36px;border-radius:18px;background:#0f0f0f;border:1px solid #333;color:#77777c;font-size:16px;padding:7px 14px}
+.bar .ic{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;color:#8d8d93;font-size:20px}
+.menu-btn{height:36px;border-radius:18px;background:#E8742F;color:#fff;font-weight:600;font-size:15px;display:flex;align-items:center;gap:6px;padding:0 14px 0 12px}
+.home{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);width:134px;height:5px;border-radius:3px;background:#fff}
+/* Mini App */
+.app{position:absolute;inset:0;background:radial-gradient(120% 70% at 50% 34%,#34477C 0%,#1a2342 55%,#10172C 100%)}
+.app-head{position:absolute;top:47px;left:0;right:0;height:52px;display:flex;align-items:center;justify-content:space-between;padding:0 14px}
+.pill{height:32px;border-radius:16px;background:rgba(255,255,255,.12);backdrop-filter:blur(10px);display:flex;align-items:center;gap:6px;padding:0 14px;font-size:15px;font-weight:500}
+.app-head .title{font-weight:600;font-size:16px}
+.cat{position:absolute;left:50%;transform:translateX(-50%);border-radius:0}
+h1{font-family:Unbounded,Inter,sans-serif;font-weight:600;letter-spacing:-.01em}
+.mono{font-family:'IBM Plex Mono',monospace}

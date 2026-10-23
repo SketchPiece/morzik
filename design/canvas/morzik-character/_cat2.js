@@ -4,16 +4,19 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
-export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [], manual = false, shiftY = 0, tailSide = 1, twitchEar = 1, paws = 'none' } = {}) {
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [], manual = false, shiftY = 0, tailSide = 1, twitchEar = 1, paws = 'none', headOnly = false, dizzy = false, transparent = false, stars = false } = {}) {
+  // headOnly — только голова крупным планом (без тела, лапок и хвоста); dizzy — глаза-спиральки крутятся,
+  // голова покачивается по кругу; stars — над головой кружат янтарные звёздочки; transparent — без фона.
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true, alpha: transparent });
   renderer.setPixelRatio(2); renderer.setSize(size, size, false);
   renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
   const scene = new THREE.Scene();
   const tex = (w, h, paint) => { const c = document.createElement('canvas'); c.width = w; c.height = h; paint(c.getContext('2d'), w, h); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t; };
   const radialTex = stops => tex(256, 256, (x, w) => { const g = x.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2); stops.forEach(([o, c]) => g.addColorStop(o, c)); x.fillStyle = g; x.fillRect(0, 0, w, w); });
-  scene.background = tex(512, 512, (x) => { const g = x.createRadialGradient(256, 200, 0, 256, 220, 360); g.addColorStop(0, '#34477C'); g.addColorStop(1, '#10172C'); x.fillStyle = g; x.fillRect(0, 0, 512, 512); });
+  if (!transparent) scene.background = tex(512, 512, (x) => { const g = x.createRadialGradient(256, 200, 0, 256, 220, 360); g.addColorStop(0, '#34477C'); g.addColorStop(1, '#10172C'); x.fillStyle = g; x.fillRect(0, 0, 512, 512); });
   const pm = new THREE.PMREMGenerator(renderer); scene.environment = pm.fromScene(new RoomEnvironment(), .04).texture; scene.environmentIntensity = .45;
   const camera = new THREE.PerspectiveCamera(30, 1, .1, 50); camera.position.set(0, .2 + shiftY, 6.7); camera.lookAt(0, -.08 + shiftY, 0); // shiftY > 0 опускает кота в кадре (для авы)
+  if (headOnly) { camera.position.set(0, .45, 6.2); camera.lookAt(0, .26, 0); }
   scene.add(new THREE.HemisphereLight(0xe6ecff, 0x1a2140, .8));
   const key = new THREE.DirectionalLight(0xfff2e6, 1.8); key.position.set(-3, 4, 5); scene.add(key);
   const rimR = new THREE.DirectionalLight(0x9fb8ff, 1.8); rimR.position.set(3.5, 2, -3); scene.add(rimR);
@@ -36,6 +39,7 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
   const tailPts = [V(-.2, -.05, -.05), V(.5, .15, .05), V(.74, .72, .2), V(.62, 1.18, .34), V(.42, 1.32, .4)].map(p => p.setX(p.x * tailSide));
   tube(tailPts, .12, furM, tail);
   tailPts.slice(-1).forEach(p => sph(.12, furM, p, [1, 1, 1], tail));
+  if (headOnly) cat.children.slice().forEach(o => cat.remove(o));
 
   // Голова: профиль вращения — округлый лоб и широкие щёки внизу; по глубине сплюснута.
   const head = new THREE.Group(); head.position.set(0, .3, 0); cat.add(head);
@@ -74,6 +78,14 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
 
   // Глаза: миндалевидная радужка с градиентом, ровная щёлка, блики.
   const irisTex = radialTex([[0, '#FFE6A0'], [.45, '#FFBE45'], [.85, '#EA8A1C'], [1, '#8E430E']]);
+  // Глаза-спиральки (dizzy): янтарная радужка с тёмной спиралью из двух витков, крутится вокруг центра.
+  const spiralTex = dizzy && tex(256, 256, (x, w) => {
+    const g = x.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2); [[0, '#FFE6A0'], [.5, '#FFBE45'], [.9, '#EA8A1C'], [1, '#8E430E']].forEach(([o, c]) => g.addColorStop(o, c));
+    x.fillStyle = g; x.fillRect(0, 0, w, w);
+    x.strokeStyle = '#1a0f12'; x.lineWidth = 15; x.lineCap = 'round'; x.beginPath();
+    for (let a = 0; a <= Math.PI * 2 * 2.6; a += .05) { const r = 6 + a / (Math.PI * 2 * 2.6) * (w / 2 - 22); x.lineTo(w / 2 + r * Math.cos(a), w / 2 + r * Math.sin(a)); }
+    x.stroke();
+  });
   const eyes = [-1, 1].map(sx => {
     const x = sx * .4, y = .1, z = surf(x, y) + .035;
     const g = new THREE.Group(); g.position.set(x, y, z); g.lookAt(x + sx * .3, y + .06, z + 1); head.add(g);
@@ -85,7 +97,8 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     const h2 = new THREE.Mesh(new THREE.CircleGeometry(.022, 16), hi); h2.position.set(-.06, -.1, .008); lid.add(h2);
     const halo = sprite('rgba(255,170,50,.45)', .62, .7, V(0, 0, -.01), g);
     pupil.userData.base = sx * .048;
-    return { lid, pupil, halo, sx };
+    if (dizzy) { pupil.visible = false; iris.material = new THREE.MeshBasicMaterial({ map: spiralTex, toneMapped: false }); }
+    return { lid, pupil, halo, sx, iris };
   });
 
   // Усы-морзянка как у первого чёрного кота: по три с каждой стороны, каждый целиком из точек и тире «·–··–».
@@ -165,8 +178,16 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     }
   }
 
+  // Звёздочки над головой (stars): пять янтарных четырёхлучевых искорок кружат по наклонённому кольцу.
+  const starRing = new THREE.Group(); starRing.position.set(0, 1.05, 0); starRing.rotation.x = .38; head.add(starRing);
+  if (stars) {
+    const shape = new THREE.Shape(); for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2 + Math.PI / 2, r = i % 2 ? .045 : .13; i ? shape.lineTo(r * Math.cos(a), r * Math.sin(a)) : shape.moveTo(r * Math.cos(a), r * Math.sin(a)); }
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: .04, bevelEnabled: true, bevelSize: .015, bevelThickness: .015, bevelSegments: 2 });
+    for (let i = 0; i < 5; i++) { const st = new THREE.Mesh(geo, glow(0xFFC24A)); const a = i / 5 * Math.PI * 2; st.position.set(Math.cos(a) * 1.05, 0, Math.sin(a) * 1.05); starRing.add(st); }
+  }
+
   const shadow = new THREE.Mesh(new THREE.PlaneGeometry(3, 3), new THREE.MeshBasicMaterial({ map: radialTex([[0, 'rgba(0,0,0,.5)'], [1, 'rgba(0,0,0,0)']]), transparent: true, depthWrite: false }));
-  shadow.rotation.x = -Math.PI / 2; shadow.position.y = -2.4; scene.add(shadow);
+  shadow.rotation.x = -Math.PI / 2; shadow.position.y = -2.4; if (!headOnly) scene.add(shadow);
 
   const CALM = 8, ease = p => (1 - Math.cos(Math.PI * Math.min(1, Math.max(0, p)))) / 2;
   const bump = (t, c, w) => { const p = (t - c) / w; return p > 0 && p < 1 ? Math.sin(Math.PI * p) : 0; };
@@ -202,6 +223,16 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     });
     if (arm) arm.rotation.z = paws === 'wave' ? -.08 + .22 * Math.sin(t * Math.PI * 2) : .02 * Math.sin(t / 4 * Math.PI * 2);
     cat.rotation.y = .12 * Math.sin(w);
+    if (dizzy) {
+      // Цикл CALM = 8 с: спиральки делают целое число оборотов в разные стороны, голова плывёт по кругу.
+      eyes.forEach(E => { E.iris.rotation.z = -E.sx * w * 6; E.lid.scale.y = 1; });
+      tongue.visible = gap.visible = true; gap.scale.x = .07; tongue.scale.y = .07; tongue.position.y = tongueY - .06;
+      head.rotation.z = .09 * Math.sin(w * 2); head.rotation.x = .05 * Math.cos(w * 2); head.rotation.y = .1 * Math.sin(w * 2 + .6);
+      ears.forEach((e, i) => e.rotation.z = (i ? -1 : 1) * (.36 + .12 * Math.sin(w * 4 + i * 1.5)));
+    }
+    starRing.rotation.y = -w * 2; scene.updateMatrixWorld();
+    // Искорки всегда смотрят в камеру (иначе на боках кольца видны ребром) и крутятся вокруг своей оси.
+    starRing.children.forEach((st, i) => { st.lookAt(camera.position); st.rotateZ(w * 4 + i); st.scale.setScalar(.8 + .25 * Math.sin(w * 6 + i * 1.3)); });
     whiskerMats.forEach(m => m.opacity = .6 + .4 * g);
     leds.forEach(l => l.material.opacity = .5 + .5 * g);
     renderer.render(scene, camera);

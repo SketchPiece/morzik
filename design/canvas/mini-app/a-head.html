@@ -1,0 +1,5 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="board" content="390x844">
+<title>А. Только голова и «скоро»</title><link rel="stylesheet" href="_shared.css"><style>.txt{position:absolute;top:510px;left:0;right:0;text-align:center}.txt h1{font-size:34px}.txt p{margin-top:12px;font-size:16px;line-height:1.45;color:#b9c3e6}</style></head>
+<body><div class="app"><div class="status"><span>10:42</span><span class="r">●●● <i></i></span></div><div class="app-head"><div class="pill">✕ Закрыть</div><div class="title">Морзик</div><div class="pill">⋯</div></div><canvas id="c" class="cat" style="top:150px;width:330px;height:330px"></canvas>
+<div class="txt"><h1>Скоро</h1><p>тут будет всё, что Морзик умеет,<br>а пока у него голова кругом</p></div><div class="home"></div></div><script src="_cat2.bundle.js"></script><script>const q=new URLSearchParams(location.search).get("t");morzikCat2(document.getElementById("c"),{size:330,headOnly:true,dizzy:true,transparent:true,t:q==null?null:+q});</script></body></html>
