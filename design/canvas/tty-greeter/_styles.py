@@ -3,7 +3,7 @@ import html, pathlib, sys
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from _pixel_head import grid as pixel_grid
 from _build import face, CSS as LINE_CSS
-from _pixel_v2 import build as avatar_grid, PALETTE as AV
+from _pixel_v2 import build as avatar_grid, PALETTE as AV, timeline, FPS
 
 HERE = pathlib.Path(__file__).parent
 VGA = {"G": "#555555", "g": "#aaaaaa", "P": "#ff55ff", "W": "#ffffff", "O": "#aa5500", "Y": "#ffff55",
@@ -175,5 +175,25 @@ a2 = page("А2 · Пиксель-арт в цветах авы",
 a3 = page("А3 · То же, только голова",
     f'<main>{pixels(avatar_grid()[:29], 12, AV)}{joke_av("тут живёт морзик", "пароль не скажу, даже за вкусняшку")}</main>', AV_BG)
 
-for name, doc in [("a2-avatar.html", a2), ("a3-avatar-head.html", a3), ("0-now.html", now), ("a-pixel.html", a), ("b-status.html", b), ("c-rounded.html", c), ("d-banner.html", d), ("e-dos.html", e)]:
+def animated(size):
+    import json
+    frames, seq = timeline(29)
+    rows = frames[0].split("\n")
+    w, h = len(rows[0]), len(rows)
+    return f'''<canvas id="cat" width="{w * size}" height="{h * size}"></canvas><script>
+const PAL = {json.dumps(AV)}, FRAMES = {json.dumps(frames)}, SEQ = {json.dumps(seq)}, S = {size}, FPS = {FPS};
+const ctx = document.getElementById("cat").getContext("2d");
+function draw(f) {{
+  FRAMES[f].split("\\n").forEach((row, y) => [...row].forEach((ch, x) => {{
+    ctx.fillStyle = PAL[ch]; ctx.fillRect(x * S, y * S, S, S);
+  }}));
+}}
+let i = 0, last = -1;
+setInterval(() => {{ const f = SEQ[i]; if (f !== last) draw(last = f); i = (i + 1) % SEQ.length; }}, 1000 / FPS);
+</script>'''
+
+a4 = page("А3 · Анимация",
+    f'<main>{animated(12)}{joke_av("тут живёт морзик", "пароль не скажу, даже за вкусняшку")}</main>', AV_BG)
+
+for name, doc in [("a4-animated.html", a4), ("a2-avatar.html", a2), ("a3-avatar-head.html", a3), ("0-now.html", now), ("a-pixel.html", a), ("b-status.html", b), ("c-rounded.html", c), ("d-banner.html", d), ("e-dos.html", e)]:
     (HERE / name).write_text(doc)
