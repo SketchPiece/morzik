@@ -75,8 +75,9 @@ def build(lid=0, look=0, tongue=2, ear=0.0, glow="Y"):
         for x, y in cells:
             edge = not inside_ellipse(x + .5, y + .5, cx, 16.5, 2.6, 3.6)
             g[y][x] = "o" if edge and y >= 17 else "O"
-        px = int(cx) + (1 if cx < 20 else 0) + look
-        for y in range(14, 20): g[y][px] = "K"
+        px = int(cx) + look                     # both pupils start in the middle of the eye
+        for y in range(14, 20):
+            if (px, y) in cells: g[y][px] = "K"
         g[13][int(cx) - 1] = g[14][int(cx) - 1] = "H"   # the shine stays put while the pupils move
         g[18][int(cx) + 2] = "H"
         if lid:
