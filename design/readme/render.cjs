@@ -1,4 +1,4 @@
-// README banner: frames of banner.html → morzik-banner.gif (one 8 s loop).
+// README banner: frames of banner.html → morzik-hello.gif (one 8 s loop).
 // Needs puppeteer-core (NODE_PATH to the folder with it), Google Chrome and ffmpeg:
 //   NODE_PATH=<folder>/node_modules node render.cjs [fps=15]
 const puppeteer = require('puppeteer-core');
@@ -18,7 +18,7 @@ const here = __dirname, frames = fs.mkdtempSync('/tmp/morzik-banner-');
     await banner.screenshot({ path: path.join(frames, String(i).padStart(4, '0') + '.png') });
   }
   await browser.close();
-  const out = path.join(here, 'morzik-banner.gif');
+  const out = path.join(here, 'morzik-hello.gif');
   execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-framerate', String(fps), '-i', path.join(frames, '%04d.png'),
     '-vf', 'split[a][b];[a]palettegen=max_colors=256:stats_mode=full[p];[b][p]paletteuse=dither=sierra2_4a', '-loop', '0', out]);
   fs.rmSync(frames, { recursive: true, force: true });
