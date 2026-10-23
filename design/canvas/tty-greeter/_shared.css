@@ -1,0 +1,9 @@
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400&display=swap");
+html, body { margin: 0; width: 1280px; height: 800px; background: #000; overflow: hidden; }
+main { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 36px; }
+pre { margin: 0; font-family: "JetBrains Mono", monospace; font-size: 20px; line-height: 1.2; color: #aaaaaa; font-variant-ligatures: none; font-feature-settings: "liga" 0, "calt" 0; }
+pre b { font-weight: 400; }
+.txt { text-align: center; }
+.top { color: #ffffff; }
+.bottom { color: #aaaaaa; }
+.key { color: #ffff55; }
