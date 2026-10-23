@@ -33,10 +33,15 @@
 
 ## Приложение
 
-Кнопка меню в чате («Морзик» слева от поля ввода, `setChatMenuButton` с `web_app`) открывает Mini App: https://morzik.pieces.run (pieces, piece `morzik`, статика из `webapp/public/`, nginx на порту 80). Пока там экран «Скоро»: голова Морзика с глазами-спиральками и подпись. Макет и варианты — `design/canvas/mini-app/` (hosted: https://draftwall.pieces.run/c/mini-app-56e8), выбран «А».
+Кнопка меню в чате («Морзик» слева от поля ввода, `setChatMenuButton` с `web_app`) открывает Mini App: https://morzik.pieces.run/?v=2 (pieces, piece `morzik`, сборка по `webapp/public/Dockerfile`: nginx со своим `nginx.conf` на порту 80). Пока там экран «Скоро»: голова Морзика с глазами-спиральками и подпись. Макет и варианты — `design/canvas/mini-app/` (hosted: https://draftwall.pieces.run/c/mini-app-56e8), выбран «А».
 
 - Голова — заранее отрендеренное видео с прозрачным фоном: `morzik-dizzy.mov` (HEVC с альфой, для WebKit: Telegram на iPhone и Mac, Safari) и `morzik-dizzy.webm` (VP9 с альфой, для Chrome и Telegram на Android); страница выбирает по User-Agent, пока грузится — постер `morzik-dizzy.png`.
 - Модель та же (`_cat2.js`), режимы `headOnly`, `dizzy`, `transparent` (и `stars`, не используется). На прозрачном фоне светящиеся детали непрозрачные, иначе усы выпадают из альфы.
+- На телефоне открывается на весь экран (`requestFullscreen`, только iOS и Android). Грабли, на которых это сидело весь день 23.10.2026:
+  - стартовый код страницы должен быть внутри функции: глобальные `const` в нём на iPhone роняли скрипт целиком (`"Script error."`, вероятно, совпадение имён с кодом, который встраивает Telegram), и ни полного экрана, ни цвета шапки, ни видео не было;
+  - `Cache-Control: no-cache` в `nginx.conf` обязателен: без него WebView Telegram на iPhone держит старую страницу и сервер не спрашивает, новая версия не доходит;
+  - `getChatMenuButton` может показывать старый адрес, хотя `setChatMenuButton` уже применился: проверять по логам сервера, куда пришёл телефон;
+  - `telegram-web-app.js` лежит рядом со страницей (своя копия), шрифты Google грузятся без блокировки.
 - Пересобрать видео: `NODE_PATH=<папка с puppeteer-core>/node_modules node webapp/render/render.cjs [fps=30]` (Chrome, ffmpeg с `hevc_videotoolbox`, только macOS). Выложить: `upload_code` для piece `morzik` из `webapp/public/`.
 
 ## Где работать над проектом
