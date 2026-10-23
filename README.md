@@ -37,4 +37,5 @@
 - `skills/personal/` — `helm` (передать работу в Helm через Helm MCP), `action-items` (список дел), `usage-report` (расход), `dreamer`.
 - `plugins/volna-chat/` — разбивка ответа на несколько сообщений и статьи Telegraph (`publish_article`). Режет по `[[split]]`, а короткий ответ (до 500 знаков, до 3 абзацев, без кода и списков) — ещё и по пустой строке: модель часто ставит её вместо маркера.
 - `config.yaml` → `mcp_servers`: `email`, `semafor`, `helm` (`https://helm.pieces.run/mcp`, OAuth, вход `hermes mcp login helm`).
+- Голосовые: `config.yaml` → `stt` — OpenAI `gpt-4o-transcribe`, язык `ru`; ключ `OPENAI_API_KEY` в `~/.hermes/.env`.
 - Перезапуск после правок: `hermes gateway restart`.
