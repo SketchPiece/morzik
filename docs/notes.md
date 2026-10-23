@@ -89,3 +89,33 @@
 3. В `config.yaml` Морзика поменять `mcp_servers.apple.url` на этот адрес, а `MORZIK_BRIDGE_AUTH` перенести в `.env` на сервере. Токен остаётся тем же.
 
 Мак при этом должен быть включён и залогинен: EventKit работает только в сессии пользователя. Если мост не отвечает, Морзик так и говорит.
+
+## Голосовой звонок (в работе)
+
+Звонок Морзику голосом из Mini App: агент ElevenLabs «Морзик (тест)» (`agent_9101m5n51bngesp85ymwzr63ab6q`, голос `huzlgRetWoDUAnVe8wEL`, TTS `eleven_v4`) слушает и говорит, а думает сам Морзик в Hermes, с теми же SOUL, памятью и MCP, что в Telegram. ElevenLabs ходит в него как в Custom LLM.
+
+```
+ElevenLabs → https://sketch-server.<tailnet>.ts.net/v1/chat/completions (Tailscale Funnel, только этот путь)
+           → голосовой прокси на Маке 100.106.22.52:8650 (voice/proxy.py)
+           → Hermes api_server 127.0.0.1:8642, модель morzik-voice → Haiku 5.5 по подписке
+```
+
+- Hermes (`~/.hermes/config.yaml`, бэкап `config.yaml.bak-2026-10-23-before-voice-api`): `gateway.api_server` включён на `127.0.0.1:8642`, алиас `model_routes.morzik-voice` → `haiku` у `claude-subscription-directsdk-experimental` (Telegram остаётся на `opus`), `max_concurrent_runs: 2`; `agent.reasoning_overrides.haiku: low`; `platform_toolsets.api_server: [memory, session_search, skills, todo, web, morzik]` плюс все MCP (`email`, `apple`, `helm`, `semafor`). В голосе нет терминала, файлов, браузера, computer use, кода, субагентов и cron.
+- Ключи в `~/.hermes/.env`: `API_SERVER_KEY` (сам Hermes, наружу не уходит) и `MORZIK_VOICE_KEY` (его хранит ElevenLabs как секрет Custom LLM). Там же `MORZIK_VOICE_HOST=100.106.22.52` и `MORZIK_VOICE_TRUSTED_PROXIES=100.82.43.109` (sketch-server).
+- Прокси `voice/proxy.py` (LaunchAgent `dev.sketchpiece.morzik-voice`, ставится `voice/install.sh`, лог `~/Library/Logs/morzik-voice.log`): пускает только `POST /v1/chat/completions` со своим ключом, модель всегда `morzik-voice`, лимит 30 запросов в минуту и 1500 в день, тело до 512 КБ. Белый список IP включается `MORZIK_VOICE_ALLOWED_IPS`; адрес звонящего берётся из последнего `X-Forwarded-For`, и только если запрос пришёл от доверенного туннеля. В стриме прокси выкидывает события Hermes, говорит «Секунду, гляну... », когда Морзик берётся за инструмент молча, и заменяет сырой текст ошибки фразой («выдохся, лимит кончился» / «что-то завис»).
+- Проверки: `python3 voice/check_proxy.py [url]` (что закрыто), `python3 -m unittest voice/test_proxy.py`, замер `VOICE_KEY=… python3 voice/bench.py --url …`.
+- Funnel: `voice/funnel.sh` запускается на sketch-server. Когда Морзик туда переедет, прокси поедет вместе с ним, и Funnel переключится на `MORZIK_VOICE_TARGET=http://127.0.0.1:8650`. Адрес для ElevenLabs при этом не изменится.
+
+Замеры 23.10.2026 через прокси, медиана из 3 прогонов. «Первая фраза» здесь — время, когда ElevenLabs может начать говорить:
+
+| Случай | Первая фраза | Весь ответ |
+|---|---|---|
+| Болтовня | 2,7 с | 2,7 с |
+| Из памяти | 2,7 с | 2,7 с |
+| Календарь (MCP `apple`) | 3,0 с («Секунду, гляну...») | 10,0 с |
+| Погода (`web_search`) | 3,4 с («Секунду, гляну...») | 6,2 с |
+
+Почему так:
+- Подписочный провайдер запускает `claude` CLI на каждый вызов модели, это ~2 с даже при 95% кэша на промпте в 13 тыс. токенов. Hermes не стримит токены от провайдеров-процессов (`agent/turn_api_call.py::_should_stream`), поэтому ответ приходит целиком. Фразу перед инструментом модель пишет, но api_server её не отдаёт, отсюда заполнитель в прокси.
+- Инструмент из MCP стоит три вызова модели: `tool_search` (MCP-инструменты отложены), сам инструмент, ответ. `tools.tool_search` настраивается только глобально, в Telegram его не трогали.
+- Лимит подписки общий с Telegram-Морзиком на Opus: во время замеров 23.10 один раз упёрлись в лимит сессии.
