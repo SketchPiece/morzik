@@ -39,6 +39,10 @@
 - Модель та же (`_cat2.js`), режимы `headOnly`, `dizzy`, `transparent` (и `stars`, не используется). На прозрачном фоне светящиеся детали непрозрачные, иначе усы выпадают из альфы.
 - Пересобрать видео: `NODE_PATH=<папка с puppeteer-core>/node_modules node webapp/render/render.cjs [fps=30]` (Chrome, ffmpeg с `hevc_videotoolbox`, только macOS). Выложить: `upload_code` для piece `morzik` из `webapp/public/`.
 
+## Где работать над проектом
+
+С 23.10.2026 проект «Морзик» в Хельме живёт на `sketch-server`: репозиторий `~/projects/Morzik` у пользователя `sketch-server-mi` (`origin` по HTTPS, пушит аккаунт SketchPiece). Бот на той же машине, к нему прямо через `sudo -u morzik …`. У Claude на сервере те же глобальные инструкции, память этого проекта, скиллы `pieces`, `canvas`, `artifact-design`, `impeccable`, MCP `pieces` и хук-сторож pieces. Копия на Маке (`~/Documents/Projects/Morzik`) больше не основная. Всё, что собирается только на macOS (мост `bridge/` на Swift, рендер видео аватарки), по-прежнему делается на Маке: подтянуть изменения с сервера, собрать, закоммитить.
+
 ## Где живёт бот
 
 С 23.10.2026 бот живёт на домашнем сервере `sketch-server` (старый ноутбук с Ubuntu, в tailnet `sketch-server.tail923acf.ts.net`), у пользователя `morzik` без sudo, в `/home/morzik/.hermes` (не в этом репозитории, там токены). Как сервер настроен и как Морзик туда переехал — в репозитории `~/Documents/Projects/sketch-server` (`setup/60-…`, `setup/61-…`, `morzik/`). На Маке остались только мост к Календарю и Напоминаниям и Semafor; старый `~/.hermes` на Маке лежит как резервная копия, его LaunchAgent'ы убраны в `~/Library/LaunchAgents/disabled-moved-to-sketch-server/`.
