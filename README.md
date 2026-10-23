@@ -35,7 +35,7 @@
 
 - `SOUL.md` — личность и манера Морзика. В речи он домашний кот, а не дежурный: без «на связи», «принял», «дежурю» (гарнитура осталась только во внешности).
 - `skills/personal/` — `helm` (передать работу в Helm через Helm MCP), `action-items` (список дел), `usage-report` (расход), `dreamer`.
-- `plugins/volna-chat/` — разбивка ответа на несколько сообщений и статьи Telegraph (`publish_article`). Режет по `[[split]]`, а короткий ответ (до 500 знаков, до 3 абзацев, без кода и списков) — ещё и по пустой строке: модель часто ставит её вместо маркера.
+- `plugins/volna-chat/` — разбивка ответа на несколько сообщений и статьи Telegraph (`publish_article`). Короткий ответ (до 500 знаков, до 3 абзацев, без кода и списков) уходит по абзацам: мысли Морзик разделяет пустой строкой. Старый маркер `[[split]]` больше не используется; если проскочит, плагин его вырезает.
 - `config.yaml` → `mcp_servers`: `email` (`https://mcp-email.pieces.run/mcp`, раньше был на Railway), `semafor`, `helm` (`https://helm.pieces.run/mcp`, OAuth, вход `hermes mcp login helm`).
 - Голосовые: `config.yaml` → `stt` — OpenAI `gpt-4o-transcribe`, язык `ru`, расшифровка в чат не дублируется (`echo_transcripts: false`); ключ `OPENAI_API_KEY` в `~/.hermes/.env`.
 - Перезапуск после правок: `hermes gateway restart`.
