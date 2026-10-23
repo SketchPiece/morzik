@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
-export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [], manual = false, shiftY = 0, tailSide = 1, twitchEar = 1 } = {}) {
+export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [], manual = false, shiftY = 0, tailSide = 1, twitchEar = 1, paws = 'none' } = {}) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
   renderer.setPixelRatio(2); renderer.setSize(size, size, false);
   renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
@@ -126,6 +126,28 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     const mic = new THREE.Mesh(new THREE.CapsuleGeometry(.062, .12, 8, 24), cushion);
     mic.position.copy(end).addScaledVector(dir, .1); mic.quaternion.setFromUnitVectors(V(0, 1, 0), dir); head.add(mic); }
 
+  // Лапки (вариант для холста): 'rest' — лежат на нижнем краю, 'wave' — машет, 'mic' — держит микрофон.
+  const beanM = new THREE.MeshStandardMaterial({ color: 0x6A4862, roughness: .6 });
+  const paw = (parent, pos, beans) => {
+    sph(.2, furM, pos, [1, 1.05, .8], parent);
+    if (!beans) return;
+    const z = pos.z + .15;
+    sph(.075, beanM, V(pos.x, pos.y - .05, z), [1.1, .9, .35], parent);
+    [[-.09, .07], [0, .11], [.09, .07]].forEach(([dx, dy]) => sph(.034, beanM, V(pos.x + dx, pos.y + dy, z - .01), [1, 1, .35], parent));
+  };
+  let arm = null;
+  if (paws !== 'none') {
+    if (paws === 'rest') [-1, 1].forEach(sx => paw(cat, V(sx * .38, -1.6, .78), false));
+    else {
+      paw(cat, V(.38, -1.6, .78), false);
+      arm = new THREE.Group(); paws === 'wave' ? arm.position.set(-.55, -1.25, .25) : arm.position.set(-.5, -1.3, .45); cat.add(arm);
+      const end = paws === 'wave' ? V(-.62, .62, .4) : V(.02, .92, .42);
+      const elbow = paws === 'wave' ? [V(end.x * .6, end.y * .3, end.z * .5)] : [V(-.32, .38, .22), V(-.14, .72, .36)];
+      tube([V(0, 0, 0), ...elbow, V(end.x * .95, end.y * .85, end.z * .95)], paws === 'wave' ? .15 : .17, furM, arm);
+      paw(arm, end, paws === 'wave');
+    }
+  }
+
   const shadow = new THREE.Mesh(new THREE.PlaneGeometry(3, 3), new THREE.MeshBasicMaterial({ map: radialTex([[0, 'rgba(0,0,0,.5)'], [1, 'rgba(0,0,0,0)']]), transparent: true, depthWrite: false }));
   shadow.rotation.x = -Math.PI / 2; shadow.position.y = -2.4; scene.add(shadow);
 
@@ -148,6 +170,7 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     body.scale.y = .88 * (1 + .012 * Math.sin(t / 4 * Math.PI * 2));
     head.rotation.z = .03 * Math.sin(w); head.rotation.y = look * 1.6; head.position.y = .3 + .015 * Math.sin(t / 4 * Math.PI * 2);
     tail.rotation.z = .14 * Math.sin(w + 1);
+    if (arm) arm.rotation.z = paws === 'wave' ? -.08 + .22 * Math.sin(t * Math.PI * 2) : .02 * Math.sin(t / 4 * Math.PI * 2);
     cat.rotation.y = .12 * Math.sin(w);
     whiskerMats.forEach(m => m.opacity = .6 + .4 * g);
     leds.forEach(l => l.material.opacity = .5 + .5 * g);

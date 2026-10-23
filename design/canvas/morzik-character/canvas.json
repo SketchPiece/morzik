@@ -229,6 +229,27 @@
    "w": 1040,
    "h": 600,
    "title": "Кот·2·2. Чёрный, доработанный"
+  },
+  "u1-paws-rest.html": {
+   "x": 0,
+   "y": 11360,
+   "w": 1040,
+   "h": 600,
+   "title": "Лапки 1. Лапки внизу"
+  },
+  "u2-paw-wave.html": {
+   "x": 1120,
+   "y": 11360,
+   "w": 1040,
+   "h": 600,
+   "title": "Лапки 2. Машет"
+  },
+  "u3-paw-mic.html": {
+   "x": 2240,
+   "y": 11360,
+   "w": 1040,
+   "h": 600,
+   "title": "Лапки 3. Держит микрофон"
   }
  },
  "order": [
@@ -263,7 +284,10 @@
   "s2-cat-black.html",
   "s3-cat-radio.html",
   "s4-cat-robot.html",
-  "t-cat-black2.html"
+  "t-cat-black2.html",
+  "u1-paws-rest.html",
+  "u2-paw-wave.html",
+  "u3-paw-mic.html"
  ],
  "notes": {
   "t": {
@@ -326,6 +350,13 @@
    "x": 0,
    "y": 9880,
    "text": "Кот·2 доработанный · матовые наушники",
+   "kind": "title2",
+   "maxW": 3280
+  },
+  "r9": {
+   "x": 0,
+   "y": 11200,
+   "text": "Кот·2·2 с лапками",
    "kind": "title2",
    "maxW": 3280
   }
