@@ -107,15 +107,15 @@
 
 ```
 ElevenLabs → https://sketch-server.<tailnet>.ts.net/v1/chat/completions (Tailscale Funnel, только этот путь)
-           → голосовой прокси на Маке 100.106.22.52:8650 (voice/proxy.py)
+           → голосовой прокси на sketch-server 127.0.0.1:8650 (voice/proxy.py)
            → Hermes api_server 127.0.0.1:8642, модель morzik-voice → Haiku 5.5 по подписке
 ```
 
-- Hermes (`~/.hermes/config.yaml`, бэкап `config.yaml.bak-2026-10-23-before-voice-api`): `gateway.api_server` включён на `127.0.0.1:8642`, алиас `model_routes.morzik-voice` → `haiku` у `claude-subscription-directsdk-experimental` (Telegram остаётся на `opus`), `max_concurrent_runs: 2`; `agent.reasoning_overrides.haiku: low`; `platform_toolsets.api_server: [memory, session_search, skills, todo, web, morzik]` плюс все MCP (`email`, `apple`, `helm`, `semafor`). В голосе нет терминала, файлов, браузера, computer use, кода, субагентов и cron.
-- Ключи в `~/.hermes/.env`: `API_SERVER_KEY` (сам Hermes, наружу не уходит) и `MORZIK_VOICE_KEY` (его хранит ElevenLabs как секрет Custom LLM). Там же `MORZIK_VOICE_HOST=100.106.22.52` и `MORZIK_VOICE_TRUSTED_PROXIES=100.82.43.109` (sketch-server).
-- Прокси `voice/proxy.py` (LaunchAgent `dev.sketchpiece.morzik-voice`, ставится `voice/install.sh`, лог `~/Library/Logs/morzik-voice.log`): пускает только `POST /v1/chat/completions` со своим ключом, модель всегда `morzik-voice`, лимит 30 запросов в минуту и 1500 в день, тело до 512 КБ. Белый список IP включается `MORZIK_VOICE_ALLOWED_IPS`; адрес звонящего берётся из последнего `X-Forwarded-For`, и только если запрос пришёл от доверенного туннеля. В стриме прокси выкидывает события Hermes, говорит «Секунду, гляну... », когда Морзик берётся за инструмент молча, и заменяет сырой текст ошибки фразой («выдохся, лимит кончился» / «что-то завис»).
+- Hermes (`/home/morzik/.hermes/config.yaml` на сервере): `gateway.api_server` включён на `127.0.0.1:8642`, алиас `model_routes.morzik-voice` → `haiku` у `claude-subscription-directsdk-experimental` (Telegram остаётся на `opus`), `max_concurrent_runs: 2`; `agent.reasoning_overrides.haiku: low`; `platform_toolsets.api_server: [memory, session_search, skills, todo, web, morzik]` плюс все MCP (`email`, `apple`, `helm`, `semafor`). В голосе нет терминала, файлов, браузера, computer use, кода, субагентов и cron.
+- Ключи в `~/.hermes/.env`: `API_SERVER_KEY` (сам Hermes, наружу не уходит) и `MORZIK_VOICE_KEY` (его хранит ElevenLabs как секрет Custom LLM). Там же `MORZIK_VOICE_HOST=127.0.0.1` и `MORZIK_VOICE_TRUSTED_PROXIES=127.0.0.1` (Funnel приходит с localhost).
+- Прокси `voice/proxy.py` (на сервере systemd user unit `morzik-voice` пользователя `morzik`, ставится из репозитория sketch-server, `morzik/install.sh`; `voice/install.sh` — прежний LaunchAgent для Мака): пускает только `POST /v1/chat/completions` со своим ключом, модель всегда `morzik-voice`, лимит 30 запросов в минуту и 1500 в день, тело до 512 КБ. Белый список IP включается `MORZIK_VOICE_ALLOWED_IPS`; адрес звонящего берётся из последнего `X-Forwarded-For`, и только если запрос пришёл от доверенного туннеля. В стриме прокси выкидывает события Hermes, говорит «Секунду, гляну... », когда Морзик берётся за инструмент молча, и заменяет сырой текст ошибки фразой («выдохся, лимит кончился» / «что-то завис»).
 - Проверки: `python3 voice/check_proxy.py [url]` (что закрыто), `python3 -m unittest voice/test_proxy.py`, замер `VOICE_KEY=… python3 voice/bench.py --url …`.
-- Funnel: `voice/funnel.sh` запускается на sketch-server. Когда Морзик туда переедет, прокси поедет вместе с ним, и Funnel переключится на `MORZIK_VOICE_TARGET=http://127.0.0.1:8650`. Адрес для ElevenLabs при этом не изменится.
+- Funnel включён 23.10.2026: `ssh sketch-server-mi@sketch-server 'MORZIK_VOICE_TARGET=http://127.0.0.1:8650 sh -s' < voice/funnel.sh`. Наружу открыт порт 443 только с путём `/v1/chat/completions`; noVNC на 6080 остался только в tailnet. Выключить: `sudo tailscale funnel --https=443 off` на сервере.
 
 Замеры 23.10.2026 через прокси, медиана из 3 прогонов. «Первая фраза» здесь — время, когда ElevenLabs может начать говорить:
 
