@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
-export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [], manual = false, shiftY = 0, tailSide = 1, twitchEar = 1, paws = 'none', headOnly = false, dizzy = false, transparent = false, stars = false, zoom = 1 } = {}) {
+export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [], manual = false, shiftY = 0, tailSide = 1, twitchEar = 1, paws = 'none', headOnly = false, dizzy = false, transparent = false, stars = false, zoom = 1, cross = 1 } = {}) {
   // headOnly — только голова крупным планом (без тела, лапок и хвоста); dizzy — глаза-спиральки крутятся,
   // голова покачивается по кругу; stars — над головой кружат янтарные звёздочки; transparent — без фона.
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true, alpha: transparent });
@@ -15,7 +15,7 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
   const radialTex = stops => tex(256, 256, (x, w) => { const g = x.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2); stops.forEach(([o, c]) => g.addColorStop(o, c)); x.fillStyle = g; x.fillRect(0, 0, w, w); });
   if (!transparent) scene.background = tex(512, 512, (x) => { const g = x.createRadialGradient(256, 200, 0, 256, 220, 360); g.addColorStop(0, '#34477C'); g.addColorStop(1, '#10172C'); x.fillStyle = g; x.fillRect(0, 0, 512, 512); });
   const pm = new THREE.PMREMGenerator(renderer); scene.environment = pm.fromScene(new RoomEnvironment(), .04).texture; scene.environmentIntensity = .45;
-  const camera = new THREE.PerspectiveCamera(30, 1, .1, 50); camera.position.set(0, .2 + shiftY, 6.7 / zoom); camera.lookAt(0, -.08 + shiftY, 0); // shiftY > 0 опускает кота в кадре (для авы), zoom < 1 отодвигает камеру
+  const camera = new THREE.PerspectiveCamera(30, 1, .1, 50); camera.position.set(0, .2 + shiftY, 6.7 / zoom); camera.lookAt(0, -.08 + shiftY, 0); // shiftY > 0 опускает кота в кадре (для авы), zoom < 1 отодвигает камеру; cross — насколько косят глаза (1 — как на аве)
   if (headOnly) { camera.position.set(0, .45, 6.2); camera.lookAt(0, .26, 0); }
   scene.add(new THREE.HemisphereLight(0xe6ecff, 0x1a2140, .8));
   const key = new THREE.DirectionalLight(0xfff2e6, 1.8); key.position.set(-3, 4, 5); scene.add(key);
@@ -205,7 +205,7 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     const look = -.055 * ease((t - 2.85) / .4) + .11 * ease((t - 3.55) / .5) - .055 * ease((t - 4.3) / .4);
     const open = Math.min(blink(t, 1.3), blink(t, 6.4));
     const tk = Math.max(0, Math.min(1, squint)); tongue.visible = gap.visible = tk > .03; gap.scale.x = .07 * tk; tongue.scale.y = .07 * tk; tongue.position.y = tongueY - .06 * tk;
-    eyes.forEach(E => { E.lid.scale.y = Math.max(.06, open); E.pupil.position.x = E.pupil.userData.base * squint + look; E.halo.material.opacity = .5 + .5 * g; });
+    eyes.forEach(E => { E.lid.scale.y = Math.max(.06, open); E.pupil.position.x = E.pupil.userData.base * cross * squint + look; E.halo.material.opacity = .5 + .5 * g; });
     // twitchEar: какое ухо дёргается (1 — правое в сцене, -1 — левое; для отзеркаленной авы -1).
     { const k = twitchEar > 0 ? 1 : -1; ears[k > 0 ? 1 : 0].rotation.z = k * (-.4 + .2 * bump(t, 6.9, .35) - .1 * bump(t, 7.25, .3)); }
     body.scale.y = .88 * (1 + .012 * Math.sin(t / 4 * Math.PI * 2));
