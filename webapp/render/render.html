@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Морзик с глазами-спиральками — кадры для приложения</title>
+<style>html,body{margin:0;background:transparent}canvas{display:block}</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script src="../../design/canvas/morzik-character/_cat2.bundle.js"></script>
+<script>
+// Прозрачный фон, только голова, глаза-спиральки. ?size=360 даёт кадр 720×720 (pixelRatio 2).
+const size = +(new URLSearchParams(location.search).get('size') || 360), c = document.getElementById('c');
+c.style.width = c.style.height = size + 'px';
+const r = morzikCat2(c, { size, manual: true, headOnly: true, dizzy: true, transparent: true });
+window.renderAt = t => { r.frame(t); return c.toDataURL('image/png'); };
+window.loop = r.loop;
+</script>
+</body>
+</html>

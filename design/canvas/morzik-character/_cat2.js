@@ -24,7 +24,10 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
 
   const furM = new THREE.MeshStandardMaterial({ color: 0x2F2C3A, roughness: .92, metalness: 0 }); // плотная матовая шерсть, без отлива
   const matte = c => new THREE.MeshStandardMaterial({ color: c, roughness: .95, metalness: 0 });
-  const glow = (c, op = 1) => new THREE.MeshBasicMaterial({ color: c, toneMapped: false, transparent: true, opacity: op });
+  // На прозрачном фоне полупрозрачное свечение не попадает в альфу кадра (усы пропадали бы в видео): там оно непрозрачное,
+  // а пульсирует яркостью цвета, а не прозрачностью (pulse ниже).
+  const glow = (c, op = 1) => new THREE.MeshBasicMaterial({ color: c, toneMapped: false, transparent: !transparent, opacity: transparent ? 1 : op });
+  const pulse = (m, k) => { if (!transparent) { m.opacity = k; return; } (m.userData.base ??= m.color.clone()); m.color.copy(m.userData.base).multiplyScalar(.75 + .25 * k); };
   const sprite = (col, sx, sy, pos, parent) => { const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: radialTex([[0, col], [1, 'rgba(0,0,0,0)']]), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, toneMapped: false })); s.scale.set(sx, sy, 1); s.position.copy(pos); parent.add(s); return s; };
   const sph = (r, m, p, s, parent) => { const o = new THREE.Mesh(new THREE.SphereGeometry(r, 48, 32), m); o.position.copy(p); o.scale.set(...s); parent.add(o); return o; };
   const tube = (pts, r, m, parent) => { const o = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 48, r, 10), m); parent.add(o); return o; };
@@ -233,8 +236,8 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     starRing.rotation.y = -w * 2; scene.updateMatrixWorld();
     // Искорки всегда смотрят в камеру (иначе на боках кольца видны ребром) и крутятся вокруг своей оси.
     starRing.children.forEach((st, i) => { st.lookAt(camera.position); st.rotateZ(w * 4 + i); st.scale.setScalar(.8 + .25 * Math.sin(w * 6 + i * 1.3)); });
-    whiskerMats.forEach(m => m.opacity = .6 + .4 * g);
-    leds.forEach(l => l.material.opacity = .5 + .5 * g);
+    whiskerMats.forEach(m => pulse(m, .6 + .4 * g));
+    leds.forEach(l => pulse(l.material, .5 + .5 * g));
     renderer.render(scene, camera);
     ctxs.forEach((x, i) => { const s = mirrors[i].width; x.clearRect(0, 0, s, s); x.save(); x.beginPath(); x.arc(s / 2, s / 2, s / 2, 0, Math.PI * 2); x.clip(); x.drawImage(canvas, 0, 0, s, s); x.restore(); });
   }
