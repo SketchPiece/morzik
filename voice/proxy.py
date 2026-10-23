@@ -39,8 +39,9 @@ MODEL_ALIAS = "morzik-voice"
 PASSED_FIELDS = ("messages", "stream", "temperature", "max_tokens")
 # Said while Morzik is busy with a tool. ElevenLabs wants "... " at the end: a pause, and the answer
 # that follows is not glued to the dots.
-FILLERS = ("Секунду, гляну... ", "Щас посмотрю... ", "Погоди, проверю... ", "Так, смотрю... ",
-           "Сейчас узнаю... ", "Мгновение... ")
+FILLERS = ("Мрр, щас гляну... ", "Так-так, принюхиваюсь... ", "Погоди, нос суну... ",
+           "Ща, лапкой потрогаю... ", "Сейчас, усы навострю... ", "Минутку, выслеживаю... ",
+           "Мяу, секунду... ", "Так, подкрадываюсь... ")
 
 log = logging.getLogger("morzik-voice")
 
