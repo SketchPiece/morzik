@@ -10,19 +10,21 @@ PALETTE = {
  "O": "#ffa21f",  # eye
  "o": "#e07800",  # eye edge
  "K": "#000000",  # pupils, mouth
- "W": "#ffffff",  # eye shine
  "N": "#8c5a7c",  # nose
  "T": "#f2809e",  # tongue
  "Y": "#ffb43a",  # whiskers (morse)
  "B": "#3c5096",  # mic tip
- "y": "#d98e2b",  # whiskers, dimmer (breathing light)
- "z": "#a86b22",  # whiskers, dimmest
+ "x": "#eca233",  # whiskers, a step dimmer (breathing light)
+ "y": "#d38c2b",  # whiskers, dimmer
+ "z": "#ad6f23",  # whiskers, dimmest
 }
 W, H = 40, 38
+SHUT = 99
 
-def build(blink=0, look=0, tongue=True, ear=False, glow="Y"):
-    """blink: 0 open, 1 half shut, 2 shut; look: pupils -1 left, 0, +1 right;
-    ear: right ear twitched; glow: whisker colour Y / y / z."""
+def build(lid=0, look=0, tongue=2, ear=0.0, glow="Y"):
+    """lid: 0 open, else the eyelid covers rows above it (SHUT = closed, drawn as an arc);
+    look: pupils -2..2 pixels; tongue: rows shown 0..2; ear: right ear twitch 0..1;
+    glow: whisker colour Y / x / y / z."""
     g = [["."] * W for _ in range(H)]
     def inside_ellipse(x, y, cx, cy, rx, ry): return ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1
     # body and tail behind the head
@@ -48,7 +50,7 @@ def build(blink=0, look=0, tongue=True, ear=False, glow="Y"):
     for y in range(H):
         for x in range(W):
             for outer, inner in [(((6.5, 11), (8, 1), (16, 8)), ((8.5, 9.5), (9, 4), (14, 8.5))),
-                                 (((33.5, 11), (34.5, 3) if ear else (32, 1), (24, 8)), ((31.5, 9.5), (33, 5.5) if ear else (31, 4), (26, 8.5)))]:
+                                 (((33.5, 11), (32 + 2.5 * ear, 1 + 2 * ear), (24, 8)), ((31.5, 9.5), (31 + 2 * ear, 4 + 1.5 * ear), (26, 8.5)))]:
                 if tri(outer, x + .5, y + .5): g[y][x] = "E" if tri(inner, x + .5, y + .5) else "F"
     # head
     for y in range(H):
@@ -75,13 +77,12 @@ def build(blink=0, look=0, tongue=True, ear=False, glow="Y"):
             g[y][x] = "o" if edge and y >= 17 else "O"
         px = int(cx) + (1 if cx < 20 else 0) + look
         for y in range(14, 20): g[y][px] = "K"
-        g[13][int(cx) - 1 + look] = g[14][int(cx) - 1 + look] = "W"
-        g[18][int(cx) + 2 + look] = "W"
-        if blink:
-            top = 17 if blink == 1 else 99          # the lid comes down to row 17, or all the way
+        g[13][int(cx) - 1] = g[14][int(cx) - 1] = "H"   # the shine stays put while the pupils move
+        g[18][int(cx) + 2] = "H"
+        if lid:
             for x, y in cells:
-                if y < top: g[y][x] = "F"
-            if blink == 2:
+                if y < lid: g[y][x] = "F"
+            if lid >= SHUT:
                 for x, y in cells:
                     if y == 17 and abs(x + .5 - cx) < 3: g[y][x] = "o"
                 g[16][int(cx) - 3] = g[16][int(cx) + 3] = "o"
@@ -90,7 +91,7 @@ def build(blink=0, look=0, tongue=True, ear=False, glow="Y"):
     g[23][19] = g[23][20] = "N"
     for x in (16, 19, 20, 23): g[24][x] = "K"
     for x in (17, 18, 21, 22): g[25][x] = "K"
-    for y in (26, 27): g[y][19] = g[y][20] = "T" if tongue else "f"
+    for y in (26, 27): g[y][19] = g[y][20] = "T" if y < 26 + tongue else "f"
     # whiskers in morse: dash dot dot dash dot, three rows each side
     for y, off in ((21, 1), (23, 2), (25, 1)):
         for x in [off, off + 1, off + 2, off + 4, off + 6, off + 8, off + 9, off + 10]:
@@ -101,25 +102,31 @@ def build(blink=0, look=0, tongue=True, ear=False, glow="Y"):
     g[28][28] = g[28][29] = g[28][30] = "B"; g[27][28] = g[27][29] = "B"
     return ["".join(r) for r in g]
 
-FPS = 10
+FPS = 20
 
 def timeline(head_rows=29):
-    """The 8-second loop of the avatar: blinks at 1 s and 6 s, looks left and right
-    with the tongue hidden (2.4–4.9 s), twitches an ear at the end; whiskers breathe."""
+    """The 8-second loop of the avatar: blinks at 1 s and 6 s, hides the tongue and looks
+    left and right (2.4–4.9 s), twitches an ear at the end; whiskers breathe all the time.
+    Every move goes through in-between frames so it reads smooth at 20 fps."""
     import math
+    def at(t, keys, default):
+        """Value of a step track: keys = [(start, value), ...] sorted by time."""
+        v = default
+        for start, value in keys:
+            if t >= start - 1e-9: v = value
+        return v
+    blink = []
+    for b in (1.0, 6.0):
+        blink += [(b + i * .05, lid) for i, lid in enumerate([14, 16, 18, SHUT, SHUT, 18, 16, 14, 0])]
+    look = [(2.6, -1), (2.7, -2), (3.3, -1), (3.4, 0), (3.6, 1), (3.7, 2), (4.3, 1), (4.4, 0)]
+    tongue = [(2.4, 1), (2.45, 0), (4.85, 1), (4.9, 2)]
+    ear = [(7.3, .5), (7.35, 1), (7.45, .5), (7.5, 0), (7.6, .5), (7.65, 1), (7.75, .5), (7.8, 0)]
     frames, seq = [], []
     for i in range(8 * FPS):
         t = i / FPS
-        blink = 0
-        for b in (1.0, 6.0):
-            if b <= t < b + .1 or b + .3 <= t < b + .4: blink = 1
-            elif b + .1 <= t < b + .3: blink = 2
-        look = -1 if 2.6 <= t < 3.4 else 1 if 3.6 <= t < 4.4 else 0
-        tongue = not (2.4 <= t < 4.9)
-        ear = 7.3 <= t < 7.5 or 7.6 <= t < 7.7
         level = .5 + .5 * math.sin(2 * math.pi * t / 4)
-        glow = "Y" if level > .66 else "y" if level > .33 else "z"
-        f = "\n".join(build(blink, look, tongue, ear, glow)[:head_rows])
+        glow = "zyxY"[min(3, int(level * 4))]
+        f = "\n".join(build(at(t, blink, 0), at(t, look, 0), at(t, tongue, 2), at(t, ear, 0), glow)[:head_rows])
         if f not in frames: frames.append(f)
         seq.append(frames.index(f))
     return frames, seq
