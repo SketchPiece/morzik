@@ -250,6 +250,13 @@
    "w": 1040,
    "h": 600,
    "title": "Лапки 3. Держит микрофон"
+  },
+  "u4-paws-float.html": {
+   "x": 3360,
+   "y": 11360,
+   "w": 1040,
+   "h": 600,
+   "title": "Лапки 4. Парящие лапки"
   }
  },
  "order": [
@@ -287,7 +294,8 @@
   "t-cat-black2.html",
   "u1-paws-rest.html",
   "u2-paw-wave.html",
-  "u3-paw-mic.html"
+  "u3-paw-mic.html",
+  "u4-paws-float.html"
  ],
  "notes": {
   "t": {

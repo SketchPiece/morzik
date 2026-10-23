@@ -135,8 +135,24 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     sph(.075, beanM, V(pos.x, pos.y - .05, z), [1.1, .9, .35], parent);
     [[-.09, .07], [0, .11], [.09, .07]].forEach(([dx, dy]) => sph(.034, beanM, V(pos.x + dx, pos.y + dy, z - .01), [1, 1, .35], parent));
   };
+  // Парящие лапки (paws: 'float'): без рук, как голова над телом. Каждая лапка — группа (подушечки внутри),
+  // поза — { p: [x, y, z], r: [rx, ry, rz] } в координатах кота; анимация смешивает позы (POSES и floatPose ниже).
+  const floatPaws = [];
+  if (paws === 'float') [-1, 1].forEach(sx => {
+    const g = new THREE.Group(); cat.add(g);
+    sph(.22, furM, V(0, 0, 0), [1, 1.1, .78], g);
+    sph(.08, beanM, V(0, -.05, .16), [1.1, .9, .35], g);
+    [[-.095, .075], [0, .12], [.095, .075]].forEach(([dx, dy]) => sph(.036, beanM, V(dx, dy, .15), [1, 1, .35], g));
+    floatPaws.push({ g, sx });
+  });
+  const POSES = {
+    float: sx => ({ p: [sx * 1.0, -.95, .66], r: [.9, 0, sx * .25] }),   // парит сбоку, ладошкой вниз
+    wave: sx => ({ p: [sx * 1.22, -.38, .78], r: [.05, -sx * .25, 0] }),    // поднята у щеки, ладошкой к нам
+  };
+  const lerpPose = (a, b, k) => ({ p: a.p.map((v, i) => v + (b.p[i] - v) * k), r: a.r.map((v, i) => v + (b.r[i] - v) * k) });
+  const applyPose = (g, q) => { g.position.set(...q.p); g.rotation.set(...q.r); };
   let arm = null;
-  if (paws !== 'none') {
+  if (paws === 'rest' || paws === 'wave' || paws === 'mic') {
     if (paws === 'rest') [-1, 1].forEach(sx => paw(cat, V(sx * .38, -1.6, .78), false));
     else {
       paw(cat, V(.38, -1.6, .78), false);
@@ -170,6 +186,17 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     body.scale.y = .88 * (1 + .012 * Math.sin(t / 4 * Math.PI * 2));
     head.rotation.z = .03 * Math.sin(w); head.rotation.y = look * 1.6; head.position.y = .3 + .015 * Math.sin(t / 4 * Math.PI * 2);
     tail.rotation.z = .14 * Math.sin(w + 1);
+    // Парящие лапки: покачиваются не в такт; на 5,3–6,9 с правая (в сцене) поднимается, дважды машет и возвращается.
+    floatPaws.forEach(({ g, sx }, i) => {
+      let q = POSES.float(sx);
+      q.p[1] += .045 * Math.sin(t / 4 * Math.PI * 2 + i * 1.7);
+      if (sx > 0) {
+        const up = ease((t - 5.3) / .45) - ease((t - 6.45) / .45);
+        q = lerpPose(q, POSES.wave(sx), up);
+        q.r[2] += up * .38 * Math.sin((t - 5.6) / .42 * Math.PI * 2) * (t > 5.6 && t < 6.44 ? 1 : 0);
+      }
+      applyPose(g, q);
+    });
     if (arm) arm.rotation.z = paws === 'wave' ? -.08 + .22 * Math.sin(t * Math.PI * 2) : .02 * Math.sin(t / 4 * Math.PI * 2);
     cat.rotation.y = .12 * Math.sin(w);
     whiskerMats.forEach(m => m.opacity = .6 + .4 * g);
