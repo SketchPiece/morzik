@@ -31,13 +31,13 @@
 <script src="../canvas/morzik-character/_cat2.bundle.js"></script>
 <script>
 // Morzik climbs out of a flat digital ring, like a character popping out of a frame in an ad: the ring's back arc
-// is behind him, everything below the ring is cut off, the front arc is drawn over him. No paws; he looks to the
+// is behind him, everything below the ring is cut off, the front arc is drawn over him. No paws and no tail; he looks to the
 // right (towards the name) and squints only a little, as an easter egg. The morse «·–··–» (his whisker letter)
 // is tapped out once per loop next to the name and runs around the ring.
 // Without ?t this is the live animation; render.cjs calls window.frameAt(t) for each frame.
 const q = new URLSearchParams(location.search), num = (k, d) => +(q.get(k) ?? d);
 const gl = document.getElementById('gl'), out = document.getElementById('out'), x = out.getContext('2d');
-const r = morzikCat2(gl, { size: 380, manual: true, transparent: true, zoom: num('zoom', .85), shiftY: num('shift', -.15), cross: num('cross', .3) });
+const r = morzikCat2(gl, { size: 380, manual: true, transparent: true, zoom: num('zoom', .85), shiftY: num('shift', -.15), cross: num('cross', .3), tailSide: 0 });
 // The ring, in pixels of the 760×760 output canvas.
 const R = { cx: num('cx', 380), cy: num('cy', 560), rx: num('rx', 240), ry: num('ry', 80), rot: num('rot', 8) * Math.PI / 180 };
 const AMBER = '#FFB43A';

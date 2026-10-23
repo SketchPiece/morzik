@@ -36,8 +36,8 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
   // Тело, лапки, хвост.
   const body = sph(.95, furM, V(0, -1.55, -.2), [1, .88, .82], cat);
   [-1, 1].forEach(sx => sph(.24, furM, V(sx * .36, -2.18, .5), [1, .7, 1.2], cat));
-  // tailSide = -1 сажает хвост с другой стороны (ава отзеркалена при сборке, а хвост должен остаться справа).
-  const tail = new THREE.Group(); tail.position.set(.7 * tailSide, -1.85, -.4); cat.add(tail);
+  // tailSide = -1 сажает хвост с другой стороны (ава отзеркалена при сборке, а хвост должен остаться справа), 0 — без хвоста.
+  const tail = new THREE.Group(); tail.position.set(.7 * tailSide, -1.85, -.4); cat.add(tail); tail.visible = tailSide !== 0;
   // Хвост с круглым кончиком, загнутым внутрь.
   const tailPts = [V(-.2, -.05, -.05), V(.5, .15, .05), V(.74, .72, .2), V(.62, 1.18, .34), V(.42, 1.32, .4)].map(p => p.setX(p.x * tailSide));
   tube(tailPts, .12, furM, tail);
