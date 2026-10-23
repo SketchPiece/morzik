@@ -9,8 +9,8 @@ ElevenLabs (Custom LLM) -> tunnel -> this proxy (127.0.0.1:8650) -> Hermes api_s
 - Optional allowlist of caller IPs (MORZIK_VOICE_ALLOWED_IPS, read from MORZIK_VOICE_IP_HEADER
   set by the tunnel), a request rate limit and a body size cap.
 - Speech-friendly stream: Hermes' own SSE events are dropped, and when Morzik reaches for a tool
-  before saying anything the caller gets a short filler at once ("Секунду, гляну... ") instead of
-  silence until the whole turn is done.
+  before saying anything the caller gets a short filler at once ("Секунду, гляну... " and others,
+  picked at random) instead of silence until the whole turn is done.
 - Turn chaining: ElevenLabs resends the call as plain text, without tool calls and results, so on the
   next turn Morzik would think he made up what he had looked up. After each turn the proxy remembers
   the transcript it produced and Hermes' session id; when the next request continues exactly that
@@ -27,6 +27,7 @@ import json
 import logging
 import os
 import pathlib
+import random
 import threading
 import time
 from collections import deque
@@ -36,6 +37,10 @@ ROUTE = "/v1/chat/completions"
 MODEL_ALIAS = "morzik-voice"
 # Request fields passed on to Hermes; model, provider, model_options and the like are not.
 PASSED_FIELDS = ("messages", "stream", "temperature", "max_tokens")
+# Said while Morzik is busy with a tool. ElevenLabs wants "... " at the end: a pause, and the answer
+# that follows is not glued to the dots.
+FILLERS = ("Секунду, гляну... ", "Щас посмотрю... ", "Погоди, проверю... ", "Так, смотрю... ",
+           "Сейчас узнаю... ", "Мгновение... ")
 
 log = logging.getLogger("morzik-voice")
 
@@ -68,7 +73,9 @@ def load_settings() -> dict:
         "per_minute": int(get("MORZIK_VOICE_PER_MINUTE", "30")),
         "per_day": int(get("MORZIK_VOICE_PER_DAY", "1500")),
         "max_body": int(get("MORZIK_VOICE_MAX_BODY", str(512 * 1024))),
-        "filler": get("MORZIK_VOICE_FILLER", "Секунду, гляну... "),
+        # MORZIK_VOICE_FILLERS: own phrases separated by "|".
+        "fillers": [f.strip().rstrip(". ") + "... " for f in get("MORZIK_VOICE_FILLERS").split("|") if f.strip()]
+                   or list(FILLERS),
     }
     if len(settings["key"]) < 32 or not settings["upstream_key"]:
         raise SystemExit("MORZIK_VOICE_KEY (32+ chars) and API_SERVER_KEY must be set")
@@ -363,7 +370,7 @@ class Handler(BaseHTTPRequestHandler):
             log.info("%s at %.2fs", what, time.monotonic() - started)
 
         spoken = ""
-        for frame in speech_stream(sse_events(resp), self.settings["filler"], note):
+        for frame in speech_stream(sse_events(resp), random.choice(self.settings["fillers"]), note):
             self.wfile.write(frame)
             self.wfile.flush()
             spoken += frame_text(frame)
