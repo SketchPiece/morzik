@@ -1,13 +1,22 @@
 """Morzik voice proxy: the only door from the internet to Hermes' API server.
 
-ElevenLabs (Custom LLM) -> tunnel -> this proxy (127.0.0.1:8650) -> Hermes api_server (127.0.0.1:8642)
+ElevenLabs / Mini App backend -> tunnel -> this proxy (127.0.0.1:8650) -> Hermes api_server (127.0.0.1:8642)
 
-- Serves exactly one route, POST /v1/chat/completions; everything else is 404.
+Routes (all POST; everything else is 404):
+- /v1/chat/completions — ElevenLabs Custom LLM: Morzik in Hermes answers every turn of the call.
+- /voice/context — Mini App backend (MORZIK_CONTEXT_KEY): snapshot of Morzik for the agent's own
+  model at the start of a call (see brain.py).
+- /voice/ask — ElevenLabs server tool "ask Morzik" (MORZIK_VOICE_KEY): a task from the call, done by
+  Morzik in Hermes; one Hermes session per call.
+- /voice/after-call — ElevenLabs post-call webhook (HMAC, MORZIK_VOICE_WEBHOOK_SECRET): Morzik reads
+  the transcript and saves what matters to memory.
+
+Custom LLM route details:
 - Its own bearer key (MORZIK_VOICE_KEY), so ElevenLabs never holds API_SERVER_KEY, which also
   opens /api/sessions, /v1/runs, /api/jobs and the rest.
 - Pins the model to the morzik-voice alias (Haiku, voice toolset) whatever the caller asks for.
-- Optional allowlist of caller IPs (MORZIK_VOICE_ALLOWED_IPS, read from MORZIK_VOICE_IP_HEADER
-  set by the tunnel), a request rate limit and a body size cap.
+- Optional allowlist of caller IPs for the ElevenLabs routes (MORZIK_VOICE_ALLOWED_IPS, read from
+  MORZIK_VOICE_IP_HEADER set by the tunnel), a request rate limit and a body size cap.
 - Speech-friendly stream: Hermes' own SSE events are dropped, and when Morzik reaches for a tool
   before saying anything the caller gets a short filler at once ("Секунду, гляну... " and others,
   picked at random) instead of silence until the whole turn is done.
@@ -32,9 +41,21 @@ import re
 import threading
 import time
 from collections import deque
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+# Run with python3 -I, which leaves the script's own folder off sys.path.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import brain  # noqa: E402
+
 ROUTE = "/v1/chat/completions"
+CONTEXT_ROUTE = "/voice/context"
+ASK_ROUTE = "/voice/ask"
+AFTER_CALL_ROUTE = "/voice/after-call"
+# Called by ElevenLabs, so the caller IP allowlist applies; /voice/context comes from the Mini App backend.
+FROM_ELEVENLABS = (ROUTE, ASK_ROUTE, AFTER_CALL_ROUTE)
+# Said by the agent when Morzik could not do the task.
+ASK_FAILED = "Морзик сейчас не ответил. Скажи пользователю, что не вышло, и предложи попробовать позже."
 MODEL_ALIAS = "morzik-voice"
 # Request fields passed on to Hermes; model, provider, model_options and the like are not.
 PASSED_FIELDS = ("messages", "stream", "temperature", "max_tokens")
@@ -75,6 +96,12 @@ def load_settings() -> dict:
         "per_minute": int(get("MORZIK_VOICE_PER_MINUTE", "30")),
         "per_day": int(get("MORZIK_VOICE_PER_DAY", "1500")),
         "max_body": int(get("MORZIK_VOICE_MAX_BODY", str(512 * 1024))),
+        "max_transcript_body": int(get("MORZIK_VOICE_MAX_TRANSCRIPT_BODY", str(4 * 1024 * 1024))),
+        # Unset keys switch their route off (404).
+        "context_key": get("MORZIK_CONTEXT_KEY"),
+        "webhook_secret": get("MORZIK_VOICE_WEBHOOK_SECRET"),
+        "agent_id": get("MORZIK_VOICE_AGENT_ID"),
+        "hermes_home": pathlib.Path(get("HERMES_HOME", str(pathlib.Path.home() / ".hermes"))),
         # MORZIK_VOICE_FILLERS: own phrases separated by "|".
         "fillers": [f.strip().rstrip(". ") + "... " for f in get("MORZIK_VOICE_FILLERS").split("|") if f.strip()]
                    or list(FILLERS),
@@ -261,6 +288,8 @@ class Handler(BaseHTTPRequestHandler):
     settings: dict = {}
     limiter: RateLimiter
     chains = SessionChains()
+    calls = brain.CallSessions()
+    handled_calls = brain.Seen()
     streaming = False  # True once the 200 SSE headers are out
 
     def log_message(self, fmt, *args):
@@ -291,25 +320,126 @@ class Handler(BaseHTTPRequestHandler):
 
     do_PUT = do_DELETE = do_PATCH = do_HEAD = do_OPTIONS = do_GET
 
+    def json_reply(self, status: int, data) -> None:
+        body = json.dumps(data, ensure_ascii=False).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
+        self.close_connection = True
+        self.end_headers()
+        self.wfile.write(body)
+
+    def bearer_ok(self, key: str) -> bool:
+        auth = self.headers.get("Authorization", "")
+        return bool(key) and hmac.compare_digest(auth.encode(), f"Bearer {key}".encode())
+
     def do_POST(self):
         s = self.settings
-        if self.path.split("?")[0] != ROUTE:
+        path = self.path.split("?")[0]
+        handlers = {ROUTE: self.chat, CONTEXT_ROUTE: self.context, ASK_ROUTE: self.ask,
+                    AFTER_CALL_ROUTE: self.after_call}
+        if path not in handlers or (path == CONTEXT_ROUTE and not s["context_key"]) or (
+                path == AFTER_CALL_ROUTE and not s["webhook_secret"]):
             return self.reply(404, "not found")
-        if s["allowed_ips"] and self.client_ip() not in s["allowed_ips"]:
+        if path in FROM_ELEVENLABS and s["allowed_ips"] and self.client_ip() not in s["allowed_ips"]:
             return self.reply(403, "forbidden")
-        auth = self.headers.get("Authorization", "")
-        if not hmac.compare_digest(auth.encode(), f"Bearer {s['key']}".encode()):
+        # The webhook is signed instead (checked once the body is read).
+        if path != AFTER_CALL_ROUTE and not self.bearer_ok(
+                s["context_key"] if path == CONTEXT_ROUTE else s["key"]):
             return self.reply(401, "unauthorized")
         length = int(self.headers.get("Content-Length") or 0)
-        if length <= 0 or length > s["max_body"]:
+        limit = s["max_transcript_body"] if path == AFTER_CALL_ROUTE else s["max_body"]
+        if length <= 0 or length > limit:
             return self.reply(413, "body too large or empty")
         if not self.limiter.allow():
             return self.reply(429, "rate limited")
+        raw = self.rfile.read(length)
+        if path == AFTER_CALL_ROUTE and not brain.verify_signature(
+                self.headers.get("ElevenLabs-Signature", ""), raw, s["webhook_secret"]):
+            return self.reply(401, "bad signature")
         try:
-            body = json.loads(self.rfile.read(length))
+            body = json.loads(raw)
         except ValueError:
             return self.reply(400, "invalid json")
-        if not isinstance(body, dict) or not isinstance(body.get("messages"), list):
+        if not isinstance(body, dict):
+            return self.reply(400, "object expected")
+        handlers[path](body)
+
+    def context(self, body: dict) -> None:
+        self.json_reply(200, brain.snapshot(self.settings["hermes_home"]))
+
+    def hermes(self, messages: list, session_id: str | None = None) -> tuple[str | None, str | None]:
+        """One non-streaming Morzik turn -> (answer, Hermes session id); answer None on failure."""
+        s = self.settings
+        headers = {"Authorization": f"Bearer {s['upstream_key']}", "Content-Type": "application/json"}
+        if session_id:
+            headers["X-Hermes-Session-Id"] = session_id
+        conn = http.client.HTTPConnection(s["upstream_host"], s["upstream_port"], timeout=290)
+        try:
+            conn.request("POST", ROUTE, body=json.dumps(
+                {"model": MODEL_ALIAS, "messages": messages}).encode(), headers=headers)
+            resp = conn.getresponse()
+            payload = resp.read()
+            if resp.status != 200:
+                log.warning("hermes answered %s: %s", resp.status, payload[:300])
+                return None, None
+            choice = json.loads(payload)["choices"][0]
+            if choice.get("finish_reason") not in (None, "stop"):
+                log.warning("hermes turn ended with %s", choice.get("finish_reason"))
+                return None, None
+            return choice["message"]["content"], resp.getheader("X-Hermes-Session-Id")
+        except (ConnectionError, OSError, http.client.HTTPException, ValueError, KeyError, IndexError) as exc:
+            log.warning("hermes call failed: %s", exc)
+            return None, None
+        finally:
+            conn.close()
+
+    def ask(self, body: dict) -> None:
+        """ElevenLabs tool: a task from the call for Morzik in Hermes."""
+        request = str(body.get("request") or "").strip()
+        if not request:
+            return self.reply(400, "request required")
+        conversation_id = str(body.get("conversation_id") or "").strip()
+        session_id = self.calls.get(conversation_id) if conversation_id else None
+        started = time.monotonic()
+        answer, new_session = self.hermes(
+            [{"role": "system", "content": brain.ASK_SYSTEM}, {"role": "user", "content": request}],
+            session_id)
+        log.info("ask for %s %s in %.1fs", conversation_id or "unknown call",
+                 "answered" if answer else "failed", time.monotonic() - started)
+        if answer and conversation_id and new_session:
+            self.calls.put(conversation_id, new_session)
+        self.json_reply(200, {"answer": answer or ASK_FAILED})
+
+    def after_call(self, body: dict) -> None:
+        """ElevenLabs post-call webhook: Morzik saves what matters from the call."""
+        self.json_reply(200, {"ok": True})  # answer at once; ElevenLabs retries slow endpoints
+        if body.get("type") != "post_call_transcription":
+            return
+        data = body.get("data") or {}
+        agent_id, conversation_id = data.get("agent_id"), str(data.get("conversation_id") or "")
+        if self.settings["agent_id"] and agent_id != self.settings["agent_id"]:
+            log.info("after-call for another agent %s ignored", agent_id)
+            return
+        if not conversation_id or not self.handled_calls.first_time(conversation_id):
+            return
+        transcript = brain.transcript_text(data.get("transcript"))
+        if "Пользователь:" not in transcript:
+            log.info("after-call %s: the user said nothing, skipped", conversation_id)
+            return
+
+        def save():
+            answer, _ = self.hermes([{"role": "user", "content": brain.SAVE_REQUEST.format(
+                transcript=transcript)}])
+            log.info("after-call %s: %s", conversation_id, "saved" if answer else "failed")
+
+        threading.Thread(target=save, name=f"after-call-{conversation_id}", daemon=True).start()
+
+    def chat(self, body: dict) -> None:
+        """Custom LLM: one turn of the call answered by Morzik in Hermes, streamed for speech."""
+        s = self.settings
+        if not isinstance(body.get("messages"), list):
             return self.reply(400, "messages required")
 
         upstream_body = {k: body[k] for k in PASSED_FIELDS if k in body}
@@ -393,9 +523,10 @@ def main() -> None:
     Handler.limiter = RateLimiter(settings["per_minute"], settings["per_day"])
     server = ThreadingHTTPServer((settings["listen_host"], settings["listen_port"]), Handler)
     server.daemon_threads = True
-    log.info("listening on %s:%s -> %s:%s, allowlist %s", settings["listen_host"],
-             settings["listen_port"], settings["upstream_host"], settings["upstream_port"],
-             sorted(settings["allowed_ips"]) or "off")
+    log.info("listening on %s:%s -> %s:%s, allowlist %s, context %s, after-call %s",
+             settings["listen_host"], settings["listen_port"], settings["upstream_host"],
+             settings["upstream_port"], sorted(settings["allowed_ips"]) or "off",
+             "on" if settings["context_key"] else "off", "on" if settings["webhook_secret"] else "off")
     server.serve_forever()
 
 
