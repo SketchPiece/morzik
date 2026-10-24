@@ -5,6 +5,8 @@ import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "../../../greeter"))
 from pixel import PALETTE, W, H, SHUT
 
+EYE_RX = 2.8     # eye half-width (was 3.6 before the eyes got narrower); the edge ring is 1 pixel inside it
+
 
 def build(lid=0, look=0, tongue=2, ear=0.0, glow="Y", ear_l=0.0, flat=0.0, look_y=0, pupil=1, mouth=0, happy=False):
     """As pixel.build, plus: ear_l: left ear twitch 0..1; flat: both ears pinned back 0..1;
@@ -56,14 +58,14 @@ def build(lid=0, look=0, tongue=2, ear=0.0, glow="Y", ear_l=0.0, flat=0.0, look_
                 g[y][xx] = "h" if x == 4 else "H"
     for cx in (12.5, 27.5):
         c = int(cx)
-        cells = [(x, y) for y in range(H) for x in range(W) if inside_ellipse(x + .5, y + .5, cx, 16.5, 3.6, 4.4)]
+        cells = [(x, y) for y in range(H) for x in range(W) if inside_ellipse(x + .5, y + .5, cx, 16.5, EYE_RX, 4.4)]
         if happy:
             for x, y in cells: g[y][x] = "F"
             for x, y in [(c - 3, 18), (c - 2, 17), (c - 1, 16), (c, 16), (c + 1, 16), (c + 2, 17), (c + 3, 18)]:
                 g[y][x] = "O"
             continue
         for x, y in cells:
-            edge = not inside_ellipse(x + .5, y + .5, cx, 16.5, 2.6, 3.6)
+            edge = not inside_ellipse(x + .5, y + .5, cx, 16.5, EYE_RX - 1, 3.6)
             g[y][x] = "o" if edge and y >= 17 else "O"
         px, ly = c + look, look_y
         dots = [(px, y) for y in range(14 + ly, 20 + ly)]

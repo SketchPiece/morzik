@@ -5,7 +5,7 @@ const RU = Object.fromEntries([..."qwertyuiopasdfghjklzxcvbnm,."].map((k, i) => 
 const LBL = { enter: "Enter", space: "", left: "←", up: "↑", down: "↓", right: "→" };
 const PAWS = [".FFFFFF.", "FFFFFFFF", "FFfFFfFF", "FFfFFfFF"];
 const Z4 = ["hhhh", "..h.", ".h..", "hhhh"], Z5 = ["HHHHH", "...H.", "..H..", ".H...", "HHHHH"];
-const DOT = [".NN.", "NTTN", "NTTN", ".NN."];
+const DOT = [".RR.", "RRRR", "RRRR", ".RR."];
 const SW = 56, SH = 38, S = 10, CX = 8, CY = 4;
 
 function play(D) {
@@ -26,7 +26,7 @@ function play(D) {
   const pat = (p, x, y) => p.forEach((r, j) => [...r].forEach((c, i) => px(x + i, y + j, c)));
   let i = 0, prev = [];
   function tick() {
-    const T = D.ticks[i], [f, dy, dx, paws, z, dot, k, snd, line, say, screen] = T;
+    const T = D.ticks[i], [f, dy, dx, paws, z, dot, k, snd, line, say, screen, mo] = T;
     ctx.fillStyle = D.pal["."]; ctx.fillRect(0, 0, SW * S, SH * S);
     D.frames[f].split("\n").forEach((r, y) => [...r].forEach((c, x) => px(CX + x + dx, CY + y + dy, c)));
     if (paws) { pat(PAWS, 16, SH - paws); pat(PAWS, 32, SH - paws); }
@@ -37,6 +37,9 @@ function play(D) {
     $("snd").textContent = snd || "звук: тихо"; $("snd").className = "snd" + (snd ? " on" : "");
     $("line").textContent = line;
     $("top").textContent = D.says[say][0]; $("bot").textContent = D.says[say][1];
+    document.querySelector(".txt").style.display = mo ? "none" : "";
+    $("mo").style.display = mo ? "flex" : "none";
+    if (mo) { $("mo1").textContent = mo[0]; $("mo2").textContent = mo[1]; }
     $("login").style.display = screen ? "block" : "none";
     const t = i / D.fps; let a = 0;
     D.steps.forEach(([s], j) => { if (t >= s) a = j; });

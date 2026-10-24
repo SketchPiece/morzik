@@ -2,7 +2,10 @@
 with the keys being pressed, the sound and the steps under him. Run: python3 _build.py"""
 import json, math
 from pathlib import Path
+import _cat
 from _cat import build, SHUT, PALETTE
+
+_cat.EYE_RX = 2.8              # narrower eyes, see e-eyes.html
 
 FPS = 20
 HERE = Path(__file__).parent
@@ -85,19 +88,6 @@ def held(t, presses, dur=.12):
     return {k for s, k, *_ in presses if s <= t < s + dur}
 
 
-MORSE = {"S": "...", "O": "---", "М": "--", "Я": ".-.-", "У": "..-"}
-
-
-def morse(word, t0, dot=.15, dash=.45):
-    out, t = [], t0
-    for n, ch in enumerate(word):
-        for s in MORSE[ch]:
-            d = dot if s == "." else dash
-            out.append((t, t + d, s, n)); t += d + dot
-        t += 2 * dot
-    return out, t
-
-
 # ---------------------------------------------------------------- the games
 
 def now():
@@ -137,52 +127,79 @@ def scratch():
                        (9.6, "Через пару секунд успокаивается")])
 
 
-def gaze():
-    presses = [(.4, "a"), (1.4, "l"), (2.6, "5"), (3.6, "b"), (4.4, "m")] + [(5.4 + i * .17, k) for i, k in enumerate("qwertyuiop")]
-    def f(t):
-        s = dict(glow=breath(t), lid=blink(t, [8.6]))
-        s["keys"] = held(t, presses, .15)
-        last = [k for st, k in presses if st <= t]
-        last_t = max([st for st, k in presses if st <= t], default=-9)
-        if last and t - last_t < 1.2:
-            s["look"], s["look_y"] = look_at(last[-1])
-        return s
-    return dict(file="2-gaze.html", title="2 · Взгляд за клавишей", dur=9.5, f=f,
-                steps=[(0, "Нажал слева — смотрит влево"), (1.4, "Справа — вправо"), (2.6, "Верхний ряд — глаза вверх, нижний — вниз"),
-                       (5.4, "Пробежал по ряду — глаза бегут следом"), (7.6, "Перестал — через секунду снова смотрит прямо")])
+RU_MORSE = {"А": ".-", "Б": "-...", "В": ".--", "Г": "--.", "Д": "-..", "Е": ".", "Ж": "...-", "З": "--..", "И": "..", "Й": ".---",
+            "К": "-.-", "Л": ".-..", "М": "--", "Н": "-.", "О": "---", "П": ".--.", "Р": ".-.", "С": "...", "Т": "-", "У": "..-",
+            "Ф": "..-.", "Х": "....", "Ц": "-.-.", "Ч": "---.", "Ш": "----", "Щ": "--.-", "Ы": "-.--", "Ь": "-..-", "Э": "..-..",
+            "Ю": "..--", "Я": ".-.-"}
+DECODE = {v: k for k, v in RU_MORSE.items()}
+LETTER_GAP, RESET = .5, 3.0     # a pause this long ends a letter; this long clears everything
+
+
+def signals(codes, t0, dot=.15, dash=.45):
+    """codes: one morse string per letter -> [(start, end, '.'/'-', letter n)], end time."""
+    out, t = [], t0
+    for n, code in enumerate(codes):
+        for s in code:
+            d = dot if s == "." else dash
+            out.append((t, t + d, s, n)); t += d + dot
+        t += LETTER_GAP + .05
+    return out, t - LETTER_GAP - .05 - dot
+
+
+def screen_morse(sigs, t):
+    """What the console shows while you tap: the dots and dashes, and the letters read so far.
+    A letter is read once the pause after it is LETTER_GAP; the one still being tapped shows
+    what it would be so far, in brackets."""
+    marks, letters, cur, n0 = [], [], "", 0
+    for a, b, s, n in sigs:
+        if a > t: break
+        if n != n0:
+            letters.append(DECODE.get(cur, "?")); marks.append(" "); cur, n0 = "", n
+        marks.append("•" if s == "." else "—"); cur += s
+    last_end = max((b for a, b, *_ in sigs if a <= t), default=None)
+    if cur:
+        if t - last_end >= LETTER_GAP: letters.append(DECODE.get(cur, "?"))
+        else: letters.append("[" + DECODE.get(cur, "?") + "…]")
+    return " ".join(marks).replace("   ", "   "), " ".join(letters), last_end
 
 
 def morse_game():
-    sos, end = morse("SOS", .6)
-    ans, ans_end = morse("МЯУ", end + 1.0, .22, .6)
+    you, end = signals([RU_MORSE[c] for c in "СОС"], .6)
+    ans, ans_end = signals([RU_MORSE[c] for c in "МЯУ"], end + 1.4, .22, .6)
+    bad, bad_end = signals(["------"], ans_end + 2.6)
     def f(t):
         s = dict(glow=breath(t))
-        on = [x for x in sos if x[0] <= t < x[1]]
-        if .6 <= t < end + .9:
-            s["glow"] = "Y" if on else "z"
-            s["keys"] = {"space"} if on else set()
-            s["ear"] = .5 if on else 0
-            s["look_y"] = 1
-        elif end + .9 <= t < ans_end:
+        def tapping(sigs):
+            on = any(a <= t < b for a, b, *_ in sigs)
+            s.update(glow="Y" if on else "z", keys={"space"} if on else set(), ear=.5 if on else 0, look_y=1)
+        if .6 <= t < end + 1.4:
+            tapping(you)
+            top, bottom, _ = screen_morse(you, t)
+            s["mo"] = [top, bottom]
+        elif end + 1.4 <= t < ans_end + 1.6:
             s["glow"] = "Y" if any(a <= t < b for a, b, *_ in ans) else "z"
-        if t >= ans_end: s["lid"] = blink(t, [ans_end + .4])
-        line = "ты:      " + sym_text(sos, t)
-        if t >= end + 1.0: line += "\nморзик:  " + sym_text(ans, t) + ("   = МЯУ" if t >= ans_end else "")
-        s["line"] = line if t >= .6 else ""
+            top, bottom, _ = screen_morse(ans, t)
+            s["mo"] = [top, "морзик: " + bottom if bottom else "морзик отвечает…"]
+            if t >= ans_end: s["lid"] = blink(t, [ans_end + .3])
+        elif bad[0][0] <= t:
+            tapping(bad)
+            top, bottom, last = screen_morse(bad, t)
+            idle = t - bad_end
+            if idle < RESET:
+                if idle >= LETTER_GAP:
+                    bottom = "? нет такой буквы"
+                    if idle >= 1: bottom += f" · сброс через {max(1, math.ceil(RESET - idle))}"
+                    s.update(look_y=0, ear=twitch(t, [bad_end + .6]))
+                s["mo"] = [top, bottom]
+            else:
+                s["lid"] = blink(t, [bad_end + RESET + .3])
         return s
-    return dict(file="3-morse.html", title="3 · Морзянка пробелом, ответ усами", dur=ans_end + 2, f=f,
-                steps=[(0, "Стучишь пробелом: коротко — точка, долго — тире"), (.6, "Усы вспыхивают в такт, ухо ловит каждый сигнал"),
-                       (end + 1.0, "Отвечает морзянкой усами"), (ans_end, "Это «МЯУ». На SOS, «ПРИВЕТ» и т.п. — свои ответы")])
-
-
-def sym_text(sigs, t):
-    """Dots and dashes sent so far, a space between letters."""
-    out, letter = "", 0
-    for a, b, s, n in sigs:
-        if a > t: break
-        out += (" " if n != letter else "") + ("•" if s == "." else "—")
-        letter = n
-    return out
+    return dict(file="2-morse.html", title="2 · Морзянка: видно, что стучишь; ошибку стирает пауза", dur=bad_end + RESET + 1.8, f=f,
+                steps=[(0, "Стучишь пробелом: коротко — точка, долго — тире"),
+                       (.6, "На экране вместо шутки — твои точки и тире и уже прочитанные буквы"),
+                       (end + 1.4, "Слово кончилось — отвечает морзянкой усами, ответ тоже на экране"),
+                       (bad[0][0], "Настучал то, чего нет в азбуке, — «?»"),
+                       (bad_end + 1, f"{RESET:.0f} с без нажатий — всё стирается, можно заново")])
 
 
 def words():
@@ -204,33 +221,10 @@ def words():
         if 14.2 <= t < 14.8: s.update(mouth=1, snd="мяу")
         if t >= 14.8: s["lid"] = blink(t, [15.4])
         return s
-    return dict(file="4-words.html", title="4 · Слова: кис-кис, морзик, рыба, мяу", dur=16.5, f=f,
+    return dict(file="3-words.html", title="3 · Слова: кис-кис, морзик, рыба, мяу", dur=16.5, f=f,
                 steps=[(0, "«кис-кис» — уши торчком, зрачки шире, приподнимается"), (3.6, "«морзик» — медленно моргает: по-кошачьи «люблю»"),
                        (7.4, "«рыба», «вкусняшка» — облизывается"), (11.0, "«мяу» — отвечает мявком"),
                        (14.0, "Просто клавиша — короткий мявк, как сейчас")])
-
-
-def lie():
-    palm = set("rtyufghjcvbn")
-    def f(t):
-        s = dict(glow=breath(t, 6, 1) if t > 3 else breath(t))
-        if .5 <= t < 9: s["keys"] = palm
-        if .8 <= t < 9.6: s.update(look_y=1, pupil=2 if t < 1.6 else 1)
-        if t >= 1.3:
-            dy = ramp(t, 1.3, 2.6, 0, 5) if t < 10.3 else ramp(t, 10.3, 11.1, 5, 0)
-            s["dy"] = round(dy)
-            s["paws"] = max(0, min(4, round(dy) - 1))
-        if t < 9.6:
-            s["lid"] = round(ramp(t, 2.2, 3.4, 0, 16)) if t < 4.4 else (18 if t < 5.4 else SHUT)
-        else:
-            s["lid"] = 16 if t < 10.3 else blink(t, [11.4])
-        if 3.0 <= t < 9.2: s["snd"] = "мур-р-р (тихо)"
-        s["z"] = zs(t, 6.0, 9.0, CAT_X + 36, CAT_Y + 13) if t < 11 else []
-        return s
-    return dict(file="5-lie.html", title="5 · Ладонь на клавиатуре — ложится рядом", dur=12.5, f=f,
-                steps=[(0, "Положил ладонь на клавиатуру: зажато много клавиш"), (.8, "Смотрит вниз, на руку"),
-                       (1.3, "Ложится: голова опускается на лапы"), (3.0, "Глаза закрываются, тихо мурчит"),
-                       (6.0, "Задремал"), (9.0, "Убрал руку — приоткрывает глаза и поднимает голову")])
 
 
 def sleep():
@@ -246,7 +240,7 @@ def sleep():
             s.update(lid=0, pupil=3 if t < 10.4 else 2, dy=-2 if t < 9.8 else 0, ear=1 if t < 10.0 else 0, ear_l=1 if t < 10.0 else 0, snd="мр-р?!")
         if t >= 11.0: s["lid"] = blink(t, [11.6])
         return s
-    return dict(file="6-sleep.html", title="6 · Засыпает без дела, просыпается от клавиши", dur=13, f=f,
+    return dict(file="4-sleep.html", title="4 · Засыпает без дела, просыпается от клавиши", dur=13, f=f,
                 steps=[(0, "Клавиатуру никто не трогает"), (2.0, "Через пару минут клюёт носом (здесь быстрее)"),
                        (5.6, "Спит: тусклые усы, плывут «z»"), (9.5, "Нажал клавишу — вздрагивает, уши торчком"), (11.0, "Снова на посту")])
 
@@ -264,6 +258,7 @@ def hunt():
         s = dict(glow=breath(t))
         d = dot(t)
         s["dot"] = d
+        if d: s["glow"] = "Y"
         k = at(t, keys_for, None)
         if k and .8 <= t < 6.5: s["keys"] = {k}
         if 7.6 <= t < 8.0: s["keys"] = {"left", "right"} if int(t * 10) % 2 else set()
@@ -276,7 +271,7 @@ def hunt():
             s.update(pupil=3, dy=round(ramp(t, 8.0, 8.15, 0, -3)) if t < 8.3 else round(ramp(t, 8.3, 8.6, -3, 0)), dx=round(ramp(t, 8.0, 8.2, 0, 3)) if t < 8.3 else round(ramp(t, 8.3, 8.6, 3, 0)))
         if 8.6 <= t < 10.4: s.update(happy=True, snd="мрр!" if t < 9.4 else "")
         return s
-    return dict(file="7-hunt.html", title="7 · Охота на лазерную точку", dur=11.5, f=f,
+    return dict(file="5-hunt.html", title="5 · Охота на красную лазерную точку", dur=11.5, f=f,
                 steps=[(0, "Стрелками водишь «лазерную точку»"), (1.2, "Следит за ней круглыми зрачками"),
                        (6.5, "Точка дрожит на месте — он готовится"), (8.0, "Пробел — прыжок!"), (8.6, "Поймал, доволен")])
 
@@ -288,7 +283,7 @@ def enter():
         if 1.6 <= t < 3.6: s.update(happy=True, ear=twitch(t, [2.2]), say=("ну ладно, заходи", "раз уж почесал"))
         if 3.6 <= t: s["screen"] = 1
         return s
-    return dict(file="8-enter.html", title="8 · Enter, если его сегодня чесали", dur=6, f=f,
+    return dict(file="6-enter.html", title="6 · Enter, если его сегодня чесали", dur=6, f=f,
                 steps=[(0, "Сегодня его уже чесали — он в хорошем настроении"), (1.6, "Enter: довольно щурится, «ну ладно, заходи»"),
                        (3.6, "Дальше обычный вход")])
 
@@ -306,12 +301,12 @@ def night():
         if 9.6 <= t < 11.4:
             s.update(lid=SHUT if 10.0 <= t < 11.1 else 17, mouth=2 if 9.8 <= t < 11.2 else 0, snd="а-а-ам" if 9.8 <= t < 11.2 else "")
         return s
-    return dict(file="9-night.html", title="9 · Ночью: сонный, зевает", dur=12.5, f=f,
+    return dict(file="7-night.html", title="7 · Ночью: сонный, зевает", dur=12.5, f=f,
                 steps=[(0, "Ночью (примерно с 23 до 7) глаза прикрыты, усы тусклее"), (1.0, "Зевает"),
                        (5.0, "Нажал клавишу — реагирует не сразу, лениво"), (9.6, "И снова зевает")])
 
 
-GAMES = [now, scratch, gaze, morse_game, words, lie, sleep, hunt, enter, night]
+GAMES = [now, scratch, morse_game, words, sleep, hunt, enter, night]
 CAT_KEYS = ["lid", "look", "tongue", "ear", "glow", "ear_l", "flat", "look_y", "pupil", "mouth", "happy"]
 
 
@@ -328,12 +323,13 @@ def render(game):
         say = list(s.get("say", JOKE))
         if say not in says: says.append(say)
         ticks.append([index[key], s.get("dy", 0), s.get("dx", 0), s.get("paws", 0), s.get("z", []), s.get("dot"),
-                      " ".join(sorted(s.get("keys", ()))), s.get("snd", ""), s.get("line", ""), says.index(say), s.get("screen", 0)])
-    data = dict(pal=PALETTE, frames=frames, ticks=ticks, says=says, steps=game["steps"], fps=FPS)
+                      " ".join(sorted(s.get("keys", ()))), s.get("snd", ""), s.get("line", ""), says.index(say), s.get("screen", 0), s.get("mo")])
+    data = dict(pal={**PALETTE, "R": "#ff2a2a"}, frames=frames, ticks=ticks, says=says, steps=game["steps"], fps=FPS)
     html = f"""<!doctype html><html><head><meta charset="utf-8"><meta name="board" content="1280x800">
 <title>{game['title']}</title><link rel="stylesheet" href="_shared.css"></head>
 <body><section class="screen"><div class="tty"><canvas id="st" width="560" height="380"></canvas>
-<div class="txt"><div class="top" id="top"></div><div class="bottom" id="bot"></div><div class="hint"><b>Enter</b> — войти</div></div></div>
+<div class="txt"><div class="top" id="top"></div><div class="bottom" id="bot"></div><div class="hint"><b>Enter</b> — войти</div></div>
+<div class="mo" id="mo"><div id="mo1"></div><div id="mo2"></div></div></div>
 <pre class="login" id="login">Ubuntu 26.04 LTS sketch-server tty1
 
 sketch-server login: <span class="cur">_</span></pre></section>
@@ -345,7 +341,32 @@ sketch-server login: <span class="cur">_</span></pre></section>
     return len(frames)
 
 
+def eyes():
+    """Static board: the eye width now and two narrower ones, the whole head big."""
+    faces = []
+    for rx, label in ((3.6, "Сейчас · 7 пикселей"), (3.1, "Чуть уже · 7 только посередине"), (2.8, "Уже · 5 пикселей (взял этот)")):
+        _cat.EYE_RX = rx
+        faces.append([label, "\n".join(build()[:29])])
+    _cat.EYE_RX = 2.8
+    html = f"""<!doctype html><html><head><meta charset="utf-8"><meta name="board" content="1280x800">
+<title>Глаза поуже: сравнение</title><link rel="stylesheet" href="_shared.css"></head>
+<body class="eyes"><div class="faces" id="faces"></div><script>
+const PAL = {json.dumps(PALETTE)}, FACES = {json.dumps(faces, ensure_ascii=False)}, S = 9;
+FACES.forEach(([label, art]) => {{
+  const fig = document.createElement("figure"), c = document.createElement("canvas"), rows = art.split("\\n");
+  c.width = rows[0].length * S; c.height = rows.length * S;
+  const ctx = c.getContext("2d");
+  rows.forEach((r, y) => [...r].forEach((ch, x) => {{ ctx.fillStyle = PAL[ch]; ctx.fillRect(x * S, y * S, S, S); }}));
+  fig.append(c); const cap = document.createElement("figcaption"); cap.textContent = label; fig.append(cap);
+  document.getElementById("faces").append(fig);
+}});
+</script></body></html>
+"""
+    (HERE / "e-eyes.html").write_text(html)
+
+
 if __name__ == "__main__":
+    eyes()
     for g in GAMES:
         game = g()
         print(game["file"], render(game), "frames")

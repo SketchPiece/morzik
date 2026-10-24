@@ -24,3 +24,8 @@ body { display: flex; flex-direction: column; font-family: Inter, system-ui, san
 .steps { margin: 0; padding: 0 0 0 22px; color: #6f7096; font-size: 15px; line-height: 22px; display: flex; flex-direction: column; gap: 3px; }
 .steps li.on { color: #ece8df; } .steps li.done { color: #9c98b3; }
 .bar { height: 3px; background: #2a3561; border-radius: 2px; margin-top: auto; } .bar i { display: block; height: 100%; width: 0; background: #ffa21f; border-radius: 2px; }
+.mo { display: none; flex-direction: column; align-items: center; justify-content: center; gap: 10px; height: 122px; font-family: "JetBrains Mono", monospace; }
+#mo1 { color: #ffa21f; font-size: 30px; line-height: 36px; white-space: pre; } #mo2 { color: #ece8df; font-size: 20px; line-height: 26px; white-space: pre; }
+body.eyes { background: #1f2b52; } .faces { display: flex; gap: 30px; height: 100%; align-items: center; justify-content: center; }
+.faces figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 18px; }
+.faces figcaption { font: 500 18px Inter, sans-serif; color: #ece8df; }
