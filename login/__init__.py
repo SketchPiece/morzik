@@ -27,21 +27,24 @@ POLL = 1.0
 SCHEMA = {
     "name": "request_login",
     "description": (
-        "Ask the user to log in to a site in your browser when it needs him: a password, a 2FA code, a captcha, "
-        "a confirmation on his phone. Opens the page in your Chrome, sends him a message with a button that "
-        "opens your screen in the Morzik App (Face ID, no passwords in the chat), and waits until he says he "
-        "is done or not now. Never ask him for passwords or codes in the chat; use this instead. While it "
-        "waits, do not touch the browser. After 'done', check that the login worked and carry on."
+        "Log in / sign in to a site in your browser with the user: password, 2FA code, captcha, confirmation on "
+        "his phone, a login that is not saved in browser_vault. Sends him a message with a button that opens "
+        "your screen in the Morzik App (Face ID); he types the password there himself, and you wait until he "
+        "says he is done or not now. Works from Telegram, unlike browser_vault save_login. Never ask for "
+        "passwords or codes in the chat; use this instead. While it waits, do not touch the browser. After "
+        "'done', check that the login worked and carry on."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "site": {"type": "string", "description": "Short site name for the button, e.g. 'Госуслуги', 'Amazon'."},
-            "url": {"type": "string", "description": "Login page (or the page that needs the login) to open."},
+            "url": {"type": "string", "description": (
+                "Login page to open in a new tab. Leave out to keep the current tab (e.g. you already typed "
+                "the email and the password step is open).")},
             "message": {"type": "string", "description": (
                 "Your short message to the user above the button, in your usual voice: what for, in a few words.")},
         },
-        "required": ["site", "url", "message"],
+        "required": ["site", "message"],
     },
 }
 
@@ -92,13 +95,14 @@ def _request_login(params, **kwargs):
     del kwargs
     site, url = str(params.get("site") or "").strip()[:40], str(params.get("url") or "").strip()
     message = str(params.get("message") or "").strip() or f"нужно войти в {site}"
-    if not site or not url.startswith(("https://", "http://")):
-        return json.dumps({"success": False, "error": "site and an http(s) url are required"})
+    if not site or (url and not url.startswith(("https://", "http://"))):
+        return json.dumps({"success": False, "error": "site is required, url must be http(s)"})
     requests = STATE / "requests"
     requests.mkdir(parents=True, exist_ok=True, mode=0o700)
     _cleanup(requests)
     try:
-        _open_tab(url)
+        if url:
+            _open_tab(url)
     except (OSError, ValueError, KeyError) as exc:
         return json.dumps({"success": False, "error": f"could not open the page in Chrome: {exc}"})
 
@@ -151,6 +155,34 @@ def _request_login(params, **kwargs):
     return json.dumps({"success": status == "done", "status": status, "note": notes.get(status, "")})
 
 
+def _adjust_registry() -> bool:
+    """request_login may wait longer than Hermes' generic 7-minute tool deadline; browser_vault is off:
+    its "secure window" for a password does not open from Telegram, and Morzik kept offering it."""
+    try:
+        from tools.registry import no_cache_check_fn, registry
+    except Exception:
+        return False
+    entries = {e.name: e for e in registry.get_all_entries() if e.name in ("request_login", "browser_vault")}
+    if "request_login" in entries:
+        entries["request_login"].execution_timeout = WAIT + 60
+    vault = entries.get("browser_vault")
+    if vault is not None and not getattr(vault.check_fn, "_morzik_off", False):
+        off = no_cache_check_fn(lambda: False)
+        off._morzik_off = True
+        vault.check_fn = off
+        logger.info("morzik-login: browser_vault switched off")
+    return vault is not None and "request_login" in entries
+
+
 def register(ctx):
     ctx.register_tool(name="request_login", toolset="morzik-login", schema=SCHEMA, handler=_request_login,
                       emoji="🔑")
+    if not _adjust_registry():
+        # browser_vault may register after plugins: retry in the background for a while.
+        def retry():
+            for _ in range(120):
+                time.sleep(1)
+                if _adjust_registry():
+                    return
+        import threading
+        threading.Thread(target=retry, name="morzik-login-registry", daemon=True).start()
