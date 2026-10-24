@@ -1,0 +1,161 @@
+diff --git a/agent/turn_context.py b/agent/turn_context.py
+index 009f43c795..8f97fd79c6 100644
+--- a/agent/turn_context.py
++++ b/agent/turn_context.py
+@@ -831,7 +831,13 @@ def _collect_pre_llm_call_context(
+             _spill_if_oversized = None  # type: ignore[assignment]
+             _spill_config_cached = None
+         _ctx_parts: list[str] = []
++        # ``turn_route`` names an auxiliary task this turn runs on (agent/voice_turn_route.py); the
++        # first plugin that asks wins. Reset here so a mark from an aborted turn never leaks.
++        agent._turn_route_task_pending = ""
+         for r in _pre_results:
++            if (isinstance(r, dict) and isinstance(r.get("turn_route"), str) and r["turn_route"].strip()
++                    and not agent._turn_route_task_pending):
++                agent._turn_route_task_pending = r["turn_route"].strip()
+             if isinstance(r, dict) and r.get("context"):
+                 _piece = str(r["context"])
+             elif isinstance(r, str) and r.strip():
+diff --git a/agent/voice_turn_route.py b/agent/voice_turn_route.py
+index 64d96fa73f..3be618966e 100644
+--- a/agent/voice_turn_route.py
++++ b/agent/voice_turn_route.py
+@@ -8,7 +8,10 @@ sync, background review) so nothing outside the turn sees it. A turn whose reque
+ under the voice model's compression threshold at turn start runs on the main model instead, so
+ switching to voice never compacts the conversation to suit a smaller model.
+ 
+-Surfaces mark the next turn with ``agent._voice_turn_pending = True``; it is consumed here. GPT-Live
++Surfaces mark the next turn with ``agent._voice_turn_pending = True``; it is consumed here. A
++``pre_llm_call`` plugin can route any other turn the same way by returning ``{"turn_route": "<task>"}``
++(``agent._turn_route_task_pending``), naming an auxiliary task whose provider/model the turn runs on.
++GPT-Live
+ delegations are not voice turns in this sense: the live model already owns the voice layer and
+ delegates real work to the session's model.
+ """
+@@ -70,13 +73,13 @@ def _fits(agent: Any, messages: list[dict[str, Any]], system_prompt: str) -> boo
+     return tokens < limit
+ 
+ 
+-def _lowest_effort(agent: Any) -> Optional[str]:
++def _lowest_effort(agent: Any, task: str = TASK) -> Optional[str]:
+     """The weakest enabled level the active route accepts when it cannot switch reasoning OFF, else
+     None (OFF goes on the wire as configured). Static knowledge only; a route that 400s on the disable
+     anyway is learned by turn_recovery and remembered by ``end_voice_turn_route``."""
+     from agent.auxiliary_reasoning_floor import REASONING_FLOOR_EFFORT, known_reasoning_floor
+     off = {"enabled": False}
+-    if known_reasoning_floor(off, agent.provider, agent.base_url, agent.model, TASK) is not off:
++    if known_reasoning_floor(off, agent.provider, agent.base_url, agent.model, task) is not off:
+         return REASONING_FLOOR_EFFORT
+     if agent.api_mode == "codex_responses":
+         from agent.codex_responses_adapter import classify_responses_route
+@@ -95,12 +98,12 @@ def _lowest_effort(agent: Any) -> Optional[str]:
+     return None
+ 
+ 
+-def _voice_reasoning(agent: Any, effort: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
++def _voice_reasoning(agent: Any, effort: Optional[dict[str, Any]], task: str = TASK) -> Optional[dict[str, Any]]:
+     """``effort`` for the active route: reasoning OFF becomes the lowest valid level where OFF is
+     not an option."""
+     if not (isinstance(effort, dict) and effort.get("enabled") is False):
+         return effort
+-    lowest = _lowest_effort(agent)
++    lowest = _lowest_effort(agent, task)
+     return {"enabled": True, "effort": lowest} if lowest else effort
+ 
+ 
+@@ -119,9 +122,9 @@ def _reinstall(agent: Any, state: dict[str, Any]) -> None:
+         setattr(agent, name, state[name])
+ 
+ 
+-def _warn_once(agent: Any, target: dict[str, Any], reason: str) -> None:
++def _warn_once(agent: Any, target: dict[str, Any], reason: str, task: str = TASK) -> None:
+     logger.warning("auxiliary.%s route %s/%s not used: %s; the voice turn runs on %s/%s",
+-                   TASK, target["provider"], target["model"], reason, agent.provider, agent.model)
++                   task, target["provider"], target["model"], reason, agent.provider, agent.model)
+     if getattr(agent, "_warned_voice_route", False):
+         return
+     agent._warned_voice_route = True
+@@ -133,12 +136,16 @@ def _warn_once(agent: Any, target: dict[str, Any], reason: str) -> None:
+ 
+ def begin_voice_turn_route(agent: Any, messages: list[dict[str, Any]], system_prompt: Any) -> Any:
+     """Bind the voice route for a marked turn; returns the system prompt the turn should send."""
+-    if not getattr(agent, "_voice_turn_pending", False):
+-        return system_prompt
++    # A voice turn wins over a plugin's route; either way both marks are consumed.
++    task = TASK if getattr(agent, "_voice_turn_pending", False) else str(
++        getattr(agent, "_turn_route_task_pending", "") or "")
+     agent._voice_turn_pending = False
++    agent._turn_route_task_pending = ""
++    if not task:
++        return system_prompt
+     from agent.auxiliary_task_config import _get_auxiliary_task_config
+     from hermes_constants import parse_reasoning_effort
+-    cfg = _get_auxiliary_task_config(TASK)
++    cfg = _get_auxiliary_task_config(task)
+     effort = parse_reasoning_effort(cfg.get("reasoning_effort"))
+     target = _route_target(agent, cfg)
+     if target is None and effort is None:
+@@ -158,17 +165,17 @@ def begin_voice_turn_route(agent: Any, messages: list[dict[str, Any]], system_pr
+             reason = "the conversation is larger than its context window"
+         if reason:
+             _reinstall(agent, state)
+-            _warn_once(agent, target, reason)
++            _warn_once(agent, target, reason, task)
+             agent._voice_route_state = {"reasoning_config": state["reasoning_config"]}
+             return agent._cached_system_prompt or system_prompt
+         from agent.chat_completion_helpers import rewrite_prompt_model_identity
+         rewrite_prompt_model_identity(agent, agent.model, agent.provider)
+         for name in _REJECTION_FIELDS:
+             setattr(agent, name, False)
+-        agent._turn_route_task = TASK
+-        logger.info("Voice turn routed to %s (%s)", agent.model, agent.provider)
++        agent._turn_route_task = task
++        logger.info("Turn (%s) routed to %s (%s)", task, agent.model, agent.provider)
+     if effort is not None:
+-        agent.reasoning_config = _voice_reasoning(agent, effort)
++        agent.reasoning_config = _voice_reasoning(agent, effort, task)
+     return agent._cached_system_prompt or system_prompt
+ 
+ 
+diff --git a/tests/agent/test_voice_turn_route.py b/tests/agent/test_voice_turn_route.py
+index 05f2a346a4..33f9f05e6f 100644
+--- a/tests/agent/test_voice_turn_route.py
++++ b/tests/agent/test_voice_turn_route.py
+@@ -116,3 +116,37 @@ def test_mid_voice_turn_reports_the_sessions_own_route(tmp_path, monkeypatch, se
+         finally:
+             end_voice_turn_route(agent)
+         assert _session_info(agent, {})["reasoning_effort"] == "low"
++
++
++def test_plugin_turn_route_runs_one_turn_on_its_task(tmp_path, monkeypatch):
++    """``pre_llm_call`` returning ``{"turn_route": task}`` runs that turn on ``auxiliary.<task>``."""
++    import hermes_cli.lifecycle as lifecycle
++
++    with FakeLLMServer([Text("main one"), Text("main two")]) as main, \
++            FakeLLMServer([Text("light reply")]) as light:
++        home = write_hermes_home(tmp_path / ".hermes", main.base_url, extra_config=(
++            "auxiliary:\n  light_test:\n    provider: custom\n"
++            f"    base_url: {light.base_url}\n    model: light-model\n    api_key: sk-fake-light\n"
++            "custom_providers:\n  - name: light\n"
++            f"    base_url: {light.base_url}\n    models:\n      light-model:\n        context_length: 128000\n"
++        ))
++        monkeypatch.setenv("HERMES_HOME", str(home))
++        original = lifecycle.invoke_hook
++
++        def invoke_hook(name, **kwargs):
++            if name == "pre_llm_call" and kwargs.get("user_message") == "light question":
++                return [{"turn_route": "light_test"}]
++            return original(name, **kwargs)
++
++        monkeypatch.setattr(lifecycle, "invoke_hook", invoke_hook)
++        agent = _agent(home, main.base_url)
++
++        first = agent.run_conversation("heavy question")
++        routed = agent.run_conversation("light question", conversation_history=first["messages"])
++        agent.run_conversation("heavy again", conversation_history=routed["messages"])
++
++        assert [r["model"] for r in light.main_requests()] == ["light-model"]
++        assert [r["model"] for r in main.main_requests()] == ["fake-model", "fake-model"]
++        assert routed["model"] == "light-model"
++        assert agent.model == "fake-model"
++        assert agent._turn_route_task_pending == ""

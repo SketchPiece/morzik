@@ -1,0 +1,4 @@
+name: morzik-router
+version: "0.1.0"
+description: Run light Telegram messages on the fast model (auxiliary.morzik_light), the rest on the main one
+author: Morzik
