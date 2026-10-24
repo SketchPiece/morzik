@@ -10,6 +10,9 @@ Routes (all POST; everything else is 404):
   Morzik in Hermes; one Hermes session per call.
 - /voice/after-call — ElevenLabs post-call webhook (HMAC, MORZIK_VOICE_WEBHOOK_SECRET): Morzik reads
   the transcript and saves what matters to memory.
+- /voice/start — the Mini App itself (CORS from MORZIK_VOICE_APP_ORIGIN): Telegram initData signed for
+  this bot and the user's user id -> a one-time ElevenLabs conversation token (MORZIK_ELEVENLABS_AGENT_KEY)
+  plus the snapshot as dynamic variables. No other door to start a call: the agent is private.
 
 Custom LLM route details:
 - Its own bearer key (MORZIK_VOICE_KEY), so ElevenLabs never holds API_SERVER_KEY, which also
@@ -40,6 +43,9 @@ import random
 import re
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from collections import deque
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -52,6 +58,7 @@ ROUTE = "/v1/chat/completions"
 CONTEXT_ROUTE = "/voice/context"
 ASK_ROUTE = "/voice/ask"
 AFTER_CALL_ROUTE = "/voice/after-call"
+START_ROUTE = "/voice/start"
 # Called by ElevenLabs, so the caller IP allowlist applies; /voice/context comes from the Mini App backend.
 FROM_ELEVENLABS = (ROUTE, ASK_ROUTE, AFTER_CALL_ROUTE)
 # Said by the agent when Morzik could not do the task.
@@ -101,6 +108,12 @@ def load_settings() -> dict:
         "context_key": get("MORZIK_CONTEXT_KEY"),
         "webhook_secret": get("MORZIK_VOICE_WEBHOOK_SECRET"),
         "agent_id": get("MORZIK_VOICE_AGENT_ID"),
+        "bot_token": get("TELEGRAM_BOT_TOKEN"),
+        # the user; his DM with the bot is the home channel.
+        "telegram_user_id": get("MORZIK_VOICE_TELEGRAM_USER_ID", get("TELEGRAM_HOME_CHANNEL")),
+        "elevenlabs_key": get("MORZIK_ELEVENLABS_AGENT_KEY"),
+        "elevenlabs_api": get("MORZIK_ELEVENLABS_API", "https://api.elevenlabs.io"),
+        "app_origin": get("MORZIK_VOICE_APP_ORIGIN", "https://morzik.pieces.run"),
         "hermes_home": pathlib.Path(get("HERMES_HOME", str(pathlib.Path.home() / ".hermes"))),
         # MORZIK_VOICE_FILLERS: own phrases separated by "|".
         "fillers": [f.strip().rstrip(". ") + "... " for f in get("MORZIK_VOICE_FILLERS").split("|") if f.strip()]
@@ -315,10 +328,27 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def end_headers(self):
+        # The Mini App calls /voice/start from its own origin; every answer there, errors too, needs CORS.
+        if getattr(self, "path", "").split("?")[0] == START_ROUTE:
+            self.send_header("Access-Control-Allow-Origin", self.settings["app_origin"])
+            self.send_header("Vary", "Origin")
+        super().end_headers()
+
     def do_GET(self):
         self.reply(404, "not found")
 
-    do_PUT = do_DELETE = do_PATCH = do_HEAD = do_OPTIONS = do_GET
+    do_PUT = do_DELETE = do_PATCH = do_HEAD = do_GET
+
+    def do_OPTIONS(self):
+        if self.path.split("?")[0] != START_ROUTE:
+            return self.reply(404, "not found")
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Methods", "POST")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Max-Age", "600")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def json_reply(self, status: int, data) -> None:
         body = json.dumps(data, ensure_ascii=False).encode()
@@ -338,14 +368,15 @@ class Handler(BaseHTTPRequestHandler):
         s = self.settings
         path = self.path.split("?")[0]
         handlers = {ROUTE: self.chat, CONTEXT_ROUTE: self.context, ASK_ROUTE: self.ask,
-                    AFTER_CALL_ROUTE: self.after_call}
+                    AFTER_CALL_ROUTE: self.after_call, START_ROUTE: self.start}
         if path not in handlers or (path == CONTEXT_ROUTE and not s["context_key"]) or (
-                path == AFTER_CALL_ROUTE and not s["webhook_secret"]):
+                path == AFTER_CALL_ROUTE and not s["webhook_secret"]) or (
+                path == START_ROUTE and not (s["elevenlabs_key"] and s["bot_token"] and s["telegram_user_id"])):
             return self.reply(404, "not found")
         if path in FROM_ELEVENLABS and s["allowed_ips"] and self.client_ip() not in s["allowed_ips"]:
             return self.reply(403, "forbidden")
-        # The webhook is signed instead (checked once the body is read).
-        if path != AFTER_CALL_ROUTE and not self.bearer_ok(
+        # The webhook is signed and the Mini App brings Telegram's signature (both checked once the body is read).
+        if path not in (AFTER_CALL_ROUTE, START_ROUTE) and not self.bearer_ok(
                 s["context_key"] if path == CONTEXT_ROUTE else s["key"]):
             return self.reply(401, "unauthorized")
         length = int(self.headers.get("Content-Length") or 0)
@@ -365,6 +396,28 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(body, dict):
             return self.reply(400, "object expected")
         handlers[path](body)
+
+    def start(self, body: dict) -> None:
+        """Mini App: the user starts a call -> conversation token and what the agent should know."""
+        s = self.settings
+        user = brain.verify_init_data(str(body.get("initData") or ""), s["bot_token"])
+        if user is None:
+            return self.reply(401, "bad initData")
+        if str(user.get("id")) != str(s["telegram_user_id"]):
+            log.warning("call start refused for Telegram user %s", user.get("id"))
+            return self.reply(403, "not allowed")
+        query = urllib.parse.urlencode({"agent_id": s["agent_id"]})
+        request = urllib.request.Request(
+            f"{s['elevenlabs_api']}/v1/convai/conversation/token?{query}",
+            headers={"xi-api-key": s["elevenlabs_key"]})
+        try:
+            with urllib.request.urlopen(request, timeout=15) as resp:
+                token = json.loads(resp.read())["token"]
+        except (urllib.error.URLError, OSError, ValueError, KeyError) as exc:
+            log.warning("conversation token failed: %s", exc)
+            return self.reply(502, "elevenlabs unavailable")
+        log.info("call started from the Mini App")
+        self.json_reply(200, {"conversationToken": token, "dynamicVariables": brain.snapshot(s["hermes_home"])})
 
     def context(self, body: dict) -> None:
         self.json_reply(200, brain.snapshot(self.settings["hermes_home"]))
