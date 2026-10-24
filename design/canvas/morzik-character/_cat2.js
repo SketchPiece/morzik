@@ -76,7 +76,37 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
 
   // Мордочка: нос и рот «ω».
   sph(.085, new THREE.MeshPhysicalMaterial({ color: 0x6A4862, roughness: .4, clearcoat: .5 }), V(0, -.18, surf(0, -.18) + .015), [1.35, .85, .75], head);
-  { const z = surf(0, -.3) + .06; tube([V(-.17, -.32, z - .03), V(-.085, -.38, z), V(0, -.3, z + .01), V(.085, -.38, z), V(.17, -.32, z - .03)], .016, new THREE.MeshStandardMaterial({ color: 0x0c0b10, roughness: .6 }), head); }
+  const omega = (z => [V(-.17, -.32, z - .03), V(-.085, -.38, z), V(0, -.3, z + .01), V(.085, -.38, z), V(.17, -.32, z - .03)])(surf(0, -.3) + .06);
+  tube(omega, .016, new THREE.MeshStandardMaterial({ color: 0x0c0b10, roughness: .6 }), head);
+
+  // Открытый рот (звонок): вырез прямо под «ω» — верхний край идёт по линии «ω» (прячется за ней), нижний — дугой вниз,
+  // уголки сомкнуты; на дне язык. Лежит на поверхности морды, форма пересчитывается каждый кадр (mouthShape).
+  const omegaPts = new THREE.CatmullRomCurve3(omega).getPoints(160);
+  const omegaY = x => { for (let i = 1; i < omegaPts.length; i++) { const a = omegaPts[i - 1], b = omegaPts[i]; if ((a.x - x) * (b.x - x) <= 0) return a.y + (b.y - a.y) * ((x - a.x) / (b.x - a.x || 1)); } return -.32; };
+  const MN = 32;
+  const flap = mat => {
+    const g = new THREE.BufferGeometry(), idx = [];
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array((MN + 1) * 6), 3));
+    for (let i = 0; i < MN; i++) idx.push(2 * i, 2 * i + 1, 2 * i + 2, 2 * i + 1, 2 * i + 3, 2 * i + 2);
+    g.setIndex(idx); mat.side = THREE.DoubleSide;
+    const o = new THREE.Mesh(g, mat); o.visible = false; o.frustumCulled = false; head.add(o); return o;
+  };
+  const mouthIn = flap(new THREE.MeshBasicMaterial({ color: 0x1a0d14 })), mouthTongue = flap(new THREE.MeshBasicMaterial({ color: 0xC9566F }));
+  const strip = (o, W, top, bottom, dz) => {
+    const p = o.geometry.attributes.position;
+    for (let i = 0; i <= MN; i++) { const x = -W + 2 * W * i / MN, yt = top(x), yb = bottom(x); p.setXYZ(2 * i, x, yt, surf(x, yt) + dz); p.setXYZ(2 * i + 1, x, yb, surf(x, yb) + dz); }
+    p.needsUpdate = true; o.visible = true;
+  };
+  // m — насколько открыт (0…1), wd — гласная: 0 «о/у» (уже и глубже), 1 «и/е» (шире и площе).
+  const mouthShape = (m, wd) => {
+    mouthIn.visible = mouthTongue.visible = m > .03; if (!mouthIn.visible) return;
+    // Низ — ровная дуга от уголка до уголка (не повторяет зигзаг «ω»), иначе язык выходит галочкой.
+    const W = .085 + .05 * wd, H = .03 + .16 * m * (1 - .35 * wd), arc = x => Math.sqrt(Math.max(0, 1 - (x / W) ** 2)) ** .8;
+    const corner = omegaY(W), low = x => Math.min(omegaY(x) - .01, corner - H * arc(x));
+    strip(mouthIn, W, x => omegaY(x) + .012, low, .016);
+    const Wt = W * .68, kt = x => Math.sqrt(Math.max(0, 1 - (x / Wt) ** 2));
+    strip(mouthTongue, Wt, x => low(x) + .006 + H * .38 * kt(x), x => low(x) + .006 * (1 - kt(x)), .02);
+  };
 
   // Язычок: пока Морзик косит, рот чуть приоткрыт (тёмная щёлочка под «ω») и оттуда свисает кончик языка.
   const mouthZ = surf(0, -.36);
@@ -257,7 +287,7 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
   };
   const kick = (key, dv) => { if (S[key]) S[key].v += dv; };
   const noise = (T, a, b, c) => .5 * Math.sin(T * a + c) + .3 * Math.sin(T * b + c * 2.3) + .2 * Math.sin(T * (a + b) * .7 + c * .5);
-  const ev = { blink: 1.5, blinkAt: -9, dbl: false, saccade: 0, gx: 0, gy: 0, flick: 3, flickAt: -9, flickEar: 1, nodAt: -9, fast: 0, slow: 0, talk: 0, quiet: 0 };
+  const ev = { blink: 1.5, blinkAt: -9, dbl: false, saccade: 0, gx: 0, gy: 0, flick: 3, flickAt: -9, flickEar: 1, nodAt: -9, pose: 0, tx: 0, ty: 0, tz: 0, fast: 0, slow: 0, talk: 0, quiet: 0 };
   function callFrame(t, w, T) {
     let dt = lastT == null ? null : T - lastT; lastT = T;
     if (dt != null && (dt <= 0 || dt > .25 || frozen != null)) dt = null;
@@ -269,7 +299,16 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     // События. Моргает раз в 2–6 с, иногда дважды; взгляд перескакивает раз в 0,6–2,5 с; ухо дёргается раз в 4–10 с.
     if (dt != null) {
       if (T > ev.blink) { ev.blinkAt = T; ev.dbl = rand(0, 1) < .15; ev.blink = T + rand(2, call === 'thinking' ? 3.5 : 6); }
-      if (T > ev.saccade) { const th = call === 'thinking'; ev.gx = (th ? .04 : 0) + rand(-1, 1) * (th ? .025 : .012); ev.gy = (th ? .055 : 0) + rand(-1, 1) * (th ? .015 : .008); ev.saccade = T + rand(.6, th ? 1.4 : 2.5); }
+      if (T > ev.saccade) {
+        const th = call === 'thinking', sp = call === 'speaking';
+        ev.gx = (th ? .04 : 0) + rand(-1, 1) * (th ? .025 : sp ? .026 : .012); ev.gy = (th ? .055 : 0) + rand(-1, 1) * (th ? .015 : sp ? .016 : .008);
+        // Говоря, иногда отводит взгляд вбок-вверх, как будто подбирает слово, и возвращается.
+        if (sp && rand(0, 1) < .25) { ev.gx = rand(0, 1) < .5 ? -.05 : .05; ev.gy = rand(.015, .035); }
+        ev.saccade = T + (sp ? rand(.35, 1.4) : rand(.6, th ? 1.4 : 2.5));
+      }
+      // Говоря и слушая, раз в 1–3 с чуть меняет позу: наклон, поворот, кивок вверх-вниз.
+      if (T > ev.pose) { const a = call === 'speaking' ? 1 : call === 'listening' ? .45 : 0;
+        ev.tz = rand(-1, 1) * .055 * a; ev.ty = rand(-1, 1) * .06 * a; ev.tx = rand(-1, 1) * .025 * a; ev.pose = T + rand(1, 3); }
       if (T > ev.flick) { ev.flickAt = T; ev.flickEar = rand(0, 1) < .5 ? 0 : 1; ev.flick = T + rand(4, call === 'thinking' ? 6 : 10); }
       // Кивки на ударениях: громкость резко выросла над средней (говорит он) — короткий кивок; ты договорил фразу — «угу».
       const a1 = 1 - Math.exp(-dt / .04), a2 = 1 - Math.exp(-dt / .45);
@@ -280,12 +319,13 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
       if (call !== 'listening') ev.talk = 0;
     }
     const bl = p => p < 0 || p > 1 ? 1 : p < .35 ? 1 - ease(p / .35) : ease((p - .35) / .65);
-    const open = Math.min(bl((T - ev.blinkAt) / .2), ev.dbl ? bl((T - ev.blinkAt - .28) / .2) : 1);
+    // На ударном слоге глаза чуть прищуриваются, как при улыбке.
+    const open = Math.min(bl((T - ev.blinkAt) / .2), ev.dbl ? bl((T - ev.blinkAt - .28) / .2) : 1) * (1 - .14 * bump(T - ev.nodAt, 0, .6));
     const flick = bump(T - ev.flickAt, 0, .22) - .5 * bump(T - ev.flickAt, .22, .2);
 
     // Цели позы для состояния; дыхание и медленный шум поверх.
     const P = { px: ev.gx, py: ev.gy, dil: 1, earF: 0, earT: 0,
-      hx: .012 * noise(T, .7, 1.9, 1) + (idle ? .025 * Math.sin(T * Math.PI / 2) : 0), hy: .025 * noise(T, .5, 1.3, 2), hz: .02 * noise(T, .6, 1.7, 3), hp: .012 * Math.sin(T * Math.PI / 2) };
+      hx: ev.tx + .012 * noise(T, .7, 1.9, 1) + (idle ? .025 * Math.sin(T * Math.PI / 2) : 0), hy: ev.ty + .025 * noise(T, .5, 1.3, 2), hz: ev.tz + .02 * noise(T, .6, 1.7, 3), hp: .012 * Math.sin(T * Math.PI / 2) };
     if (idle) Object.assign(P, { px: 0, py: 0 });
     if (mime && call === 'ringing') Object.assign(P, { earF: .5 + .5 * R, dil: 1.3, hp: P.hp + .02 * R });
     // Слушает: уши вперёд и вздрагивают на голос, голова склонена набок.
@@ -310,9 +350,7 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
       e.rotation.z = -sx * (.36 - .1 * earF - earT * (i ? 1 : .4) - (i === ev.flickEar ? .25 * flick : 0)) - lag; });
     // Рот: открывается по громкости, форма — по гласной: шире на «и», круглее на «о».
     const m = call === 'speaking' ? Math.min(1, L * 1.1) : 0, wd = spring(dt, 'wide', wide, 6, .9);
-    gap.visible = tongue.visible = m > .04;
-    gap.scale.set(.075 + .045 * wd, .015 + (.065 + .035 * (1 - wd)) * m, .03); gap.position.y = -.36 - .05 * m;
-    tongue.scale.set(.05 + .025 * wd, .035 * m, .035); tongue.position.y = -.38 - .09 * m;
+    gap.visible = tongue.visible = false; mouthShape(m, wd);
     // Наушники: на линии огонёк горит ровно, на гудках вспыхивает, до звонка почти погас.
     leds.forEach(l => glowTo(l.material, idle ? .15 : call === 'ringing' ? .35 + .8 * R : .9 + .25 * L));
     // До звонка не подключён: глаза закрыты, усы еле тлеют и медленно дышат.
@@ -361,6 +399,7 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     cat.rotation.y = .12 * Math.sin(w);
     eyes.forEach(E => { E.iris.material = dizzy ? E.spiral : E.amber; E.pupil.visible = !dizzy; if (!dizzy) E.iris.rotation.z = 0;
       if (!call) { E.lid.visible = true; E.shut.visible = false; } });
+    if (!call) mouthIn.visible = mouthTongue.visible = false;
     if (dizzy) {
       // Цикл CALM = 8 с: спиральки делают целое число оборотов в разные стороны, голова плывёт по кругу.
       eyes.forEach(E => { E.iris.rotation.z = -E.sx * w * 6; E.lid.scale.y = 1; });
