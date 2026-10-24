@@ -72,7 +72,7 @@ class BrainTest(unittest.TestCase):
     def test_snapshot(self):
         with tempfile.TemporaryDirectory() as tmp:
             snap = brain.snapshot(make_home(pathlib.Path(tmp)), datetime.datetime(2026, 10, 23, 17, 5))
-        self.assertEqual(snap["soul"], "Ты Морзик.")
+        self.assertNotIn("soul", snap)
         self.assertEqual(snap["memory"], "Пользователь живёт в Springfield.")
         self.assertEqual(snap["recent"], "(давно не переписывались)")
         self.assertEqual(snap["now"], "пятница, 23 октября 2026, 17:05")
@@ -144,7 +144,7 @@ class RoutesTest(unittest.TestCase):
         self.assertEqual(self.post("/voice/context", {}, {"Authorization": f"Bearer {KEY}"})[0], 401)
         status, snap = self.post("/voice/context", {}, {"Authorization": f"Bearer {CONTEXT_KEY}"})
         self.assertEqual(status, 200)
-        self.assertEqual(snap["soul"], "Ты Морзик.")
+        self.assertEqual(snap["memory"], "Пользователь живёт в Springfield.")
 
     def test_ask_keeps_one_session_per_call(self):
         auth = {"Authorization": f"Bearer {KEY}"}
