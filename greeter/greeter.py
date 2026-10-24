@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Login screen for the server laptop's console (tty1): the animated pixel Morzik in the
-avatar's colours and a random joke. Enter hands the console to agetty for a normal login;
-when that session ends systemd starts this screen again.
+avatar's colours and a random joke. Any other key meows (a random
+recording, one at a time) through the laptop speaker; Enter hands the console to agetty for a
+normal, silent login. When that session ends systemd starts this screen again.
 
 The Linux console has 16 colours, which can be set to any RGB (ESC ] P n rrggbb, n in ANSI
 order), so the palette in pixel.py becomes the console's own. Only the classic SGR colours
@@ -11,7 +12,7 @@ navy background (slot 0). The console font has █ but not ▀/▄, so pixels ar
 SX columns by SY rows; 2×1 is a square 24 px pixel with the 12×24 Terminus font the
 server's console uses (sketch-server, setup/50-greeter.sh).
 """
-import glob, os, random, select, sys, termios, time, tty
+import glob, os, random, select, subprocess, sys, termios, time, tty
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
@@ -19,6 +20,7 @@ from pixel import FPS, PALETTE, timeline
 
 SX, SY = 2, 1
 JOKES = Path(os.environ.get("MORZIK_GREETER_JOKES", "/usr/local/share/morzik-greeter/jokes.tsv"))
+MEOWS = Path(os.environ.get("MORZIK_GREETER_MEOWS", "/usr/local/share/morzik-greeter/meows"))
 RECENT = Path("/var/lib/morzik-greeter/recent")
 AGETTY = ["/usr/sbin/agetty", "--noreset", "--noclear",
           "--issue-file=/etc/issue:/etc/issue.d:/run/issue.d:/usr/lib/issue.d", "-", os.environ.get("TERM", "linux")]
@@ -62,6 +64,30 @@ def pick_joke():
     except OSError:
         pass
     return jokes[i]
+
+
+class Meower:
+    """Plays a random meow for a key press, unless one is still playing (no chorus when keys are mashed)."""
+
+    def __init__(self):
+        self.files, self.proc, self.last = sorted(MEOWS.glob("*.wav")), None, None
+
+    def meow(self):
+        if not self.files or (self.proc and self.proc.poll() is None):
+            return
+        f = random.choice([f for f in self.files if f != self.last] or self.files)
+        try:
+            self.proc = subprocess.Popen(["aplay", "-q", str(f)], stdin=subprocess.DEVNULL,
+                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.last = f
+        except OSError:
+            self.files = []                     # no aplay: stay quiet
+
+    def hush(self):
+        if self.proc and self.proc.poll() is None:
+            self.proc.kill()
+        if self.proc:
+            self.proc.wait()
 
 
 def lid_closed():
@@ -121,6 +147,7 @@ def screen():
     text()
 
     fd = sys.stdin.fileno()
+    meower = Meower()
     i, prev, was_closed = 0, None, False
     while True:
         closed = lid_closed()
@@ -137,8 +164,12 @@ def screen():
         draw(g, prev, x0, y0)
         prev, i = g, (i + 1) % len(seq)
         if select.select([fd], [], [], 1 / FPS)[0]:
-            if any(b in (10, 13) for b in os.read(fd, 64)):
+            keys = os.read(fd, 64)
+            if any(b in (10, 13) for b in keys):
+                meower.hush()
                 return
+            if keys:
+                meower.meow()
 
 
 def main():
