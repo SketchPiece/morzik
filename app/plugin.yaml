@@ -24,7 +24,7 @@ optional_env:
     description: "Apple team id"
     password: false
   - name: MORZIK_APP_APNS_TOPIC
-    description: "Bundle id of the app (default dev.sketchpiece.morzik)"
+    description: "Bundle id of the app (default com.sketchpiece.morzik)"
     password: false
   - name: MORZIK_APP_ALLOWED_USERS
     description: "owner"

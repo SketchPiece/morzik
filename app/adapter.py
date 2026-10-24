@@ -111,7 +111,7 @@ class MorzikAppAdapter(BasePlatformAdapter):
         self.port = int(extra.get("port") or _env("MORZIK_APP_PORT", "8660"))
         self.store: Optional[Store] = None
         self.apns = Apns(_env("MORZIK_APP_APNS_KEY"), _env("MORZIK_APP_APNS_KEY_ID"), _env("MORZIK_APP_APNS_TEAM_ID"),
-                         _env("MORZIK_APP_APNS_TOPIC", "dev.sketchpiece.morzik"))
+                         _env("MORZIK_APP_APNS_TOPIC", "com.sketchpiece.morzik"))
         self.bot_token = _env("TELEGRAM_BOT_TOKEN")
         self.owner_chat = _env("TELEGRAM_HOME_CHANNEL")
         self._sockets: dict = {}  # ws -> {"device": id, "seen": monotonic}
