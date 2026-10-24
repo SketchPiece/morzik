@@ -164,8 +164,8 @@ Telegram пользователя Морзик читает через [semafor-
 Разговаривает модель самого ElevenLabs (Claude Haiku 5.5): так ответ около секунды, а Морзик в Hermes по подписке тратит 2–3 с на каждую реплику. Дела делает настоящий Морзик:
 
 ```
-Mini App → POST /voice/start → проверка подписи Telegram initData и ID пользователя → токен звонка ElevenLabs и снимок: память (USER.md, MEMORY.md), последние 20 сообщений Telegram за 3 дня, время
-   → dynamic variables {{memory}}, {{recent}}, {{now}} в промпте агента
+Mini App → POST /voice/start → проверка подписи Telegram initData и ID пользователя → токен звонка ElevenLabs и снимок: память (USER.md, MEMORY.md), последние 20 сообщений Telegram за 3 дня, календарь на 7 дней, напоминания со сроком на 14 дней, погода на 3 дня, время
+   → dynamic variables {{memory}}, {{recent}}, {{calendar}}, {{reminders}}, {{weather}}, {{now}} в промпте агента
 ElevenLabs → инструмент perform_task → POST /voice/ask → Морзик в Hermes (morzik-voice), одна сессия Hermes на звонок
 ElevenLabs → post-call webhook → POST /voice/after-call (HMAC) → Морзик сохраняет в память только важное
 ```
@@ -181,6 +181,8 @@ ElevenLabs → post-call webhook → POST /voice/after-call (HMAC) → Морз�
 - Код: `voice/brain.py` (снимок, подпись, запись звонка), маршруты в `voice/proxy.py`, тесты `voice/test_brain.py`. Funnel публикует `/v1/chat/completions` и `/voice/` (`voice/funnel.sh`).
 - Замер 23.10: «что в календаре на понедельник» через perform_task — 9,2 с (у Морзика 4 вызова модели: tool_search, tool_describe, календарь, ответ); агент сначала говорит фразу сам.
 - На сервер файлы прокси (`proxy.py`, `brain.py`) кладутся в `/home/morzik/morzik-voice/`; установщик в репозитории sketch-server пока копирует только `proxy.py`.
+- Календарь, напоминания и погода в снимке (с 24.10): прокси сам вызывает `calendar_list_events` и `reminders_list` у моста Apple (`MORZIK_BRIDGE_URL` и `MORZIK_BRIDGE_AUTH` в `.env`) и прогноз Open-Meteo без ключа (`MORZIK_VOICE_WEATHER_AT=<lat>,<lon>`, Springfield). Всё параллельно с выдачей токена, не дольше 2 с; источник, который не ответил (например, Мак спит), попадает в промпт как «не удалось получить, узнай через perform_task», звонок всё равно начинается. Снимок целиком — 0,3–0,6 с. Промпт велит отвечать по этим блокам сразу, без perform_task. В симуляциях ElevenLabs календарь и погода — 3 из 3 сразу, напоминания на «что горит» агент иногда перепроверяет через perform_task.
+- Шпаргалка инструментов в `ASK_SYSTEM` (`voice/brain.py`, с 24.10): точные имена частых MCP-инструментов (календарь, напоминания, почта, Telegram, Helm), чтобы Hermes звал их сразу через `tool_call`, без `tool_search` и `tool_describe`. Переименуют инструмент — поправить и тут, иначе модель получит ошибку и пойдёт в поиск. Замер через `/voice/ask` 24.10, до → после: календарь 7,3 → 4,9 с, напоминания 8,3 → 5,7 с, непрочитанная почта 10,6 → 5,7 с, погода 6,7 → 4,9 с (везде 2 вызова модели вместо 3–4).
 
 ### Прежний вариант: Custom LLM через Hermes
 
