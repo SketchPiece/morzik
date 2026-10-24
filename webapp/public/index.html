@@ -86,7 +86,7 @@ let call = null, busy = false, mode = 'listening', thinking = false, timer = nul
 // Голова показывает состояние звонка вместо надписи: до звонка спит, на гудках просыпается, слушает, думает
 // (Морзик спрашивает свой мозг, perform_task), говорит; ошибка — глаза-спиральки.
 const box = document.querySelector('.cat'), canvas = document.getElementById('head');
-const head = morzikCat2(canvas, { size: Math.round(box.clientWidth), headOnly: true, transparent: true, call: 'idle', callStyle: 'both', soul: { focus: true, lids: true } });
+const head = morzikCat2(canvas, { size: Math.round(box.clientWidth), headOnly: true, transparent: true, call: 'idle', callStyle: 'both', soul: { focus: true, lids: true }, mouth: 'fangs' });
 requestAnimationFrame(() => box.classList.add('on'));
 const show = () => head.set(mode === 'speaking' ? 'speaking' : thinking ? 'thinking' : 'listening');
 
@@ -104,8 +104,11 @@ const band = (f, lo, hi) => { const a = Math.round((lo - 100) / 7900 * f.length)
 head.setLevel(T => {
   if (!call) return 0;
   if (mode !== 'speaking') return ins(call.getInputVolume(), T);
-  const f = call.getOutputByteFrequencyData();
-  return { v: outs(call.getOutputVolume(), T), wide: Math.max(0, Math.min(1, (band(f, 1700, 3500) - band(f, 250, 900) + 110) / 70)) };
+  const f = call.getOutputByteFrequencyData(), v = outs(call.getOutputVolume(), T);
+  const wide = Math.max(0, Math.min(1, (band(f, 1700, 3500) - band(f, 250, 900) + 110) / 70));
+  // Губы по буквам, пока идут тайминги букв; без них — по громкости и спектру.
+  const now = performance.now() / 1000, last = lips[lips.length - 1];
+  return last && last.t + last.d > now - 1 ? { v, wide, ...morzikLips(lips, now) } : { v, wide };
 });
 
 // Эмоции по смыслу. Агент ставит в реплику теги ElevenLabs ([laughs], [smugly]…): голос их отыгрывает, а текст
@@ -116,7 +119,7 @@ head.setLevel(T => {
 const MOODS = { laughs: 'laugh', giggles: 'laugh', chuckles: 'laugh', happily: 'laugh', mischievously: 'smug', smugly: 'smug',
                 excited: 'excited', surprised: 'excited', purrs: 'purr', meows: 'meow', curious: 'ask' };
 const letters = s => (s.match(/[\p{L}\p{N}]/gu) || []).length;
-let rate = 14, turn = null, cues = [];
+let rate = 14, turn = null, cues = [], lips = [], queued = 0;
 const cueTimes = text => {
   const out = []; let plain = '', m; const re = /\[([a-z ]+)\]\s*/gi; let last = 0;
   while ((m = re.exec(text))) { plain += text.slice(last, m.index); last = re.lastIndex;
@@ -150,11 +153,14 @@ const newTurn = () => {
 };
 // Новая реплика — если прошлая уже прозвучала и он молчал дольше 1,2 с (паузы между фразами — та же реплика).
 const fresh = () => !turn || turn.end && performance.now() - turn.end > 1200;
-const aligned = ({ chars = [], char_start_times_ms: at = [] }) => {
+const aligned = ({ chars = [], char_start_times_ms: at = [], char_durations_ms: dur = [] }) => {
   if (fresh()) newTurn();
-  const now = performance.now();
+  // Кусок звучит после предыдущего: если куски пришли пачкой, ставим их в очередь, а не все на «сейчас».
+  const now = Math.max(performance.now(), queued);
   chars.forEach((ch, i) => { if (ch === '[') turn.tag = true; else if (ch === ']') turn.tag = false;
-    else if (!turn.tag && /[\p{L}\p{N}]/u.test(ch)) turn.al.push(now + (at[i] || 0)); });
+    else if (!turn.tag && /[\p{L}\p{N}]/u.test(ch)) { turn.al.push(now + (at[i] || 0)); lips.push({ t: (now + (at[i] || 0)) / 1000, d: (dur[i] || 60) / 1000, ch }); } });
+  if (chars.length) queued = now + (at[chars.length - 1] || 0) + (dur[chars.length - 1] || 0);
+  if (lips.length > 3000) lips.splice(0, 2000);
   aligns++; schedule();
 };
 // Временная диагностика синхронизации (24.10): в логе nginx видно, когда пришёл текст реплики относительно начала
@@ -201,7 +207,7 @@ async function start() {
       onModeChange: next => { mode = next.mode; spoke(mode); show(); },
       onMessage: heard,
       onAudioAlignment: aligned,
-      onInterruption: () => { cues.forEach(clearTimeout); cues = []; },
+      onInterruption: () => { cues.forEach(clearTimeout); cues = []; lips = []; queued = 0; },
       // Инструмент мозга: пока он работает, Морзик думает (заполнитель перед ним он при этом говорит).
       onAgentToolRequest: ({ tool_name }) => { if (tool_name !== 'end_call') { thinking = true; show(); } },
       onAgentToolResponse: () => { thinking = false; show(); },
