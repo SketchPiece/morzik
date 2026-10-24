@@ -87,7 +87,7 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
   // Глаза: миндалевидная радужка с градиентом, ровная щёлка, блики.
   const irisTex = radialTex([[0, '#FFE6A0'], [.45, '#FFBE45'], [.85, '#EA8A1C'], [1, '#8E430E']]);
   // Глаза-спиральки (dizzy): янтарная радужка с тёмной спиралью из двух витков, крутится вокруг центра.
-  const spiralTex = dizzy && tex(256, 256, (x, w) => {
+  const spiralTex = tex(256, 256, (x, w) => {
     const g = x.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2); [[0, '#FFE6A0'], [.5, '#FFBE45'], [.9, '#EA8A1C'], [1, '#8E430E']].forEach(([o, c]) => g.addColorStop(o, c));
     x.fillStyle = g; x.fillRect(0, 0, w, w);
     x.strokeStyle = '#1a0f12'; x.lineWidth = 15; x.lineCap = 'round'; x.beginPath();
@@ -105,11 +105,12 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     const h2 = new THREE.Mesh(new THREE.CircleGeometry(.022, 16), hi); h2.position.set(-.06, -.1, .008); lid.add(h2);
     const halo = sprite('rgba(255,170,50,.45)', .62, .7, V(0, 0, -.01), g);
     pupil.userData.base = sx * .048;
-    if (dizzy) { pupil.visible = false; iris.material = new THREE.MeshBasicMaterial({ map: spiralTex, toneMapped: false }); }
+    // Спиральки и обычная радужка — две материи одного круга: состояние меняется на лету (set ниже).
+    const amber = iris.material, spiral = new THREE.MeshBasicMaterial({ map: spiralTex, toneMapped: false });
     // Закрытый глаз (до звонка): тонкая янтарная дужка «‿» вместо радужки, как будто спит.
     const shut = new THREE.Mesh(new THREE.TubeGeometry(new THREE.QuadraticBezierCurve3(V(-.17, .01, .01), V(0, -.11, .01), V(.17, .01, .01)), 24, .018, 8), glow(0xFFB43A));
     shut.visible = false; g.add(shut);
-    return { lid, pupil, halo, sx, iris, shut };
+    return { lid, pupil, halo, sx, iris, shut, amber, spiral };
   });
 
   // Усы-морзянка как у первого чёрного кота: по три с каждой стороны, каждый целиком из точек и тире «·–··–».
@@ -358,6 +359,8 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     });
     if (arm) arm.rotation.z = paws === 'wave' ? -.08 + .22 * Math.sin(t * Math.PI * 2) : .02 * Math.sin(t / 4 * Math.PI * 2);
     cat.rotation.y = .12 * Math.sin(w);
+    eyes.forEach(E => { E.iris.material = dizzy ? E.spiral : E.amber; E.pupil.visible = !dizzy; if (!dizzy) E.iris.rotation.z = 0;
+      if (!call) { E.lid.visible = true; E.shut.visible = false; } });
     if (dizzy) {
       // Цикл CALM = 8 с: спиральки делают целое число оборотов в разные стороны, голова плывёт по кругу.
       eyes.forEach(E => { E.iris.rotation.z = -E.sx * w * 6; E.lid.scale.y = 1; });
@@ -379,4 +382,10 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
   if (frozen != null) { frame(frozen); return; }
   const t0 = performance.now();
   renderer.setAnimationLoop(now => frame((now - t0) / 1000));
+  // Управление живой головой (приложение): set('idle' | 'ringing' | 'listening' | 'thinking' | 'speaking' | 'dizzy'),
+  // setLevel(T => число или { v, wide }) — голос из звонка (null — фразы-макеты).
+  return {
+    set(state) { dizzy = state === 'dizzy'; call = dizzy ? null : state; },
+    setLevel(fn) { level = fn; },
+  };
 }

@@ -21,11 +21,11 @@
     text-align: center; user-select: none; -webkit-user-select: none;
   }
   .cat { position: relative; width: min(82vw, 46vh, 360px); aspect-ratio: 1; pointer-events: none }
-  .cat video, .cat img { position: absolute; inset: 0; width: 100%; height: 100%; display: block }
-  .cat video, .cat.on img { opacity: 0 }
-  .cat.on video { opacity: 1 }
+  .cat canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; opacity: 0; transition: opacity .4s }
+  .cat.on canvas { opacity: 1 }
   h1 { font-family: Unbounded, Inter, sans-serif; font-weight: 600; font-size: 34px; letter-spacing: -.01em; margin-top: 8px }
   p { margin-top: 12px; font-size: 16px; line-height: 1.45; color: #b9c3e6; min-height: 1.45em }
+  p.timer { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 15px; color: #8e9ac4; letter-spacing: .04em }
   .call { margin-top: 28px; width: 76px; height: 76px; border: 0; border-radius: 50%; background: #2fbf71; color: #fff;
           display: grid; place-items: center; cursor: pointer; transition: background .2s, transform .1s; -webkit-tap-highlight-color: transparent }
   .call:active { transform: scale(.94) }
@@ -36,7 +36,7 @@
 </style>
 </head>
 <body>
-  <div class="cat"><img src="morzik-dizzy.png" alt=""><video id="v" muted loop autoplay playsinline preload="auto"></video></div>
+  <div class="cat"><canvas id="head"></canvas></div>
   <h1>Морзик</h1>
   <p id="status">позвони, поболтаем</p>
   <button class="call" id="call" aria-label="Позвонить">
@@ -53,16 +53,10 @@
     if (['ios', 'android'].includes(tg.platform) && tg.isVersionAtLeast?.('8.0')) tg.requestFullscreen();
   }
 
-  // Голова — видео с прозрачным фоном: Safari и Telegram на iPhone/Mac (WebKit) показывают прозрачность только у HEVC,
-  // Chrome и Telegram на Android — у VP9 WebM. Пока видео грузится, стоит первый кадр картинкой.
-  const ua = navigator.userAgent, webkit = /AppleWebKit/.test(ua) && !/Chrome|CriOS|Android/.test(ua);
-  const v = document.getElementById('v');
-  v.muted = true;
-  v.src = webkit ? 'morzik-dizzy.mov' : 'morzik-dizzy.webm';
-  v.addEventListener('playing', () => v.parentElement.classList.add('on'), { once: true });
-  v.play().catch(() => {});
 })();
 </script>
+<!-- Живая 3D-голова Морзика (three.js), собрана из design/canvas/morzik-character/_cat2.js. -->
+<script src="morzik.js"></script>
 <script type="module">
 // Звонок: сервер Морзика проверяет подпись Telegram (initData) и что это пользователь, выдаёт одноразовый токен
 // звонка ElevenLabs и что агент должен знать (память, последняя переписка, время). Модуль — своя область
@@ -72,15 +66,47 @@ import { Conversation } from 'https://esm.sh/@elevenlabs/client@1.30.0';
 const START = 'https://sketch-server.tail923acf.ts.net/voice/start';
 const tg = window.Telegram && Telegram.WebApp;
 const button = document.getElementById('call'), status = document.getElementById('status');
-let call = null, busy = false;
+let call = null, busy = false, mode = 'listening', thinking = false, timer = null, failed = false;
 
-const say = text => { status.textContent = text; };
+// Голова показывает состояние звонка вместо надписи: до звонка спит, на гудках просыпается, слушает, думает
+// (Морзик спрашивает свой мозг, perform_task), говорит; ошибка — глаза-спиральки.
+const box = document.querySelector('.cat'), canvas = document.getElementById('head');
+const head = morzikCat2(canvas, { size: Math.round(box.clientWidth), headOnly: true, transparent: true, call: 'idle', callStyle: 'both' });
+requestAnimationFrame(() => box.classList.add('on'));
+const show = () => head.set(mode === 'speaking' ? 'speaking' : thinking ? 'thinking' : 'listening');
+
+// Голос в звонке → рот и уши. Громкость SDK — среднее спектра 100–8000 Гц в долях 0…1; у тишины и шума свой
+// уровень, поэтому он подстраивается: пол медленно ползёт вверх и падает до тишины, пик медленно спадает.
+// Форма рта — по спектру голоса Морзика: сильные высокие форманты (1,7–3,5 кГц) против низких (250–900 Гц) — «и»,
+// слабые — «о»/«у». Бины спектра — 1024 штуки на 100–8000 Гц.
+const norm = () => { let floor = .05, peak = .3, last = 0;
+  return (vol, T) => { const dt = Math.min(.1, Math.max(0, T - last)); last = T;
+    floor = Math.min(floor + dt * .02, vol); peak = Math.max(peak - dt * .05, vol, floor + .08);
+    return Math.max(0, Math.min(1, (vol - floor) / (peak - floor))) ** 1.2; }; };
+const ins = norm(), outs = norm();
+const band = (f, lo, hi) => { const a = Math.round((lo - 100) / 7900 * f.length), b = Math.round((hi - 100) / 7900 * f.length);
+  let s = 0; for (let i = a; i < b; i++) s += f[i]; return s / (b - a); };
+head.setLevel(T => {
+  if (!call) return 0;
+  if (mode !== 'speaking') return ins(call.getInputVolume(), T);
+  const f = call.getOutputByteFrequencyData();
+  return { v: outs(call.getOutputVolume(), T), wide: Math.max(0, Math.min(1, (band(f, 1700, 3500) - band(f, 250, 900) + 110) / 70)) };
+});
+
+const say = (text, mono = false) => { status.textContent = text; status.classList.toggle('timer', mono); };
 const haptic = kind => tg?.HapticFeedback?.impactOccurred?.(kind);
 const live = on => { button.classList.toggle('live', on); button.setAttribute('aria-label', on ? 'Завершить' : 'Позвонить'); };
+const clock = on => {
+  clearInterval(timer); timer = null; if (!on) return;
+  const t0 = Date.now(), tick = () => { const s = Math.floor((Date.now() - t0) / 1000); say(`${String(s / 60 | 0).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`, true); };
+  tick(); timer = setInterval(tick, 1000);
+};
+const fail = text => { failed = true; clock(false); head.set('dizzy'); say(text); };
 
 async function start() {
   if (!tg?.initData) return say('открой меня из Telegram');
-  busy = true; button.disabled = true; haptic('medium'); say('звоню…');
+  busy = true; button.disabled = true; haptic('medium'); say(''); head.set('ringing'); live(true);
+  mode = 'listening'; thinking = false; failed = false;
   try {
     const res = await fetch(START, { method: 'POST', headers: { 'Content-Type': 'application/json' },
                                      body: JSON.stringify({ initData: tg.initData }) });
@@ -88,14 +114,22 @@ async function start() {
     const { conversationToken, dynamicVariables } = await res.json();
     call = await Conversation.startSession({
       conversationToken, connectionType: 'webrtc', dynamicVariables,
-      onConnect: () => { live(true); say('на линии'); },
-      onModeChange: ({ mode }) => say(mode === 'speaking' ? 'говорит…' : 'слушает'),
-      onDisconnect: () => { call = null; live(false); say('звонок закончен'); },
-      onError: message => say(`ошибка: ${message}`),
+      onConnect: () => { clock(true); show(); },
+      onModeChange: next => { mode = next.mode; show(); },
+      // Инструмент мозга: пока он работает, Морзик думает (заполнитель перед ним он при этом говорит).
+      onAgentToolRequest: ({ tool_name }) => { if (tool_name !== 'end_call') { thinking = true; show(); } },
+      onAgentToolResponse: () => { thinking = false; show(); },
+      onDisconnect: details => {
+        call = null; live(false);
+        if (failed) return; // ошибка уже на экране, пусть остаётся
+        if (details?.reason === 'error') return fail(`связь оборвалась${details.message ? `: ${details.message}` : ''}`);
+        clock(false); head.set('idle'); say('звонок закончен');
+      },
+      onError: message => fail(`ошибка: ${message}`),
     });
   } catch (error) {
     call = null; live(false);
-    say(/Permission|NotAllowed/i.test(String(error)) ? 'нужен доступ к микрофону' : `не вышло: ${error.message || error}`);
+    fail(/Permission|NotAllowed/i.test(String(error)) ? 'нужен доступ к микрофону' : `не вышло: ${error.message || error}`);
   } finally {
     busy = false; button.disabled = false;
   }
