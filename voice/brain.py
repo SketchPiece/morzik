@@ -91,6 +91,33 @@ def snapshot(hermes_home: pathlib.Path, now: datetime.datetime | None = None) ->
     }
 
 
+def verify_init_data(init_data: str, bot_token: str, max_age: float = 86400,
+                     now: float | None = None) -> dict | None:
+    """Telegram Mini App initData -> the user dict if Telegram signed it for this bot, else None.
+
+    https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
+    """
+    import json
+    import urllib.parse
+    if not init_data or not bot_token:
+        return None
+    fields = dict(urllib.parse.parse_qsl(init_data, keep_blank_values=True))
+    received = fields.pop("hash", "")
+    check = "\n".join(f"{key}={fields[key]}" for key in sorted(fields))
+    secret = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
+    if not received or not hmac.compare_digest(
+            hmac.new(secret, check.encode(), hashlib.sha256).hexdigest(), received):
+        return None
+    now = time.time() if now is None else now
+    if not fields.get("auth_date", "").isdigit() or now - int(fields["auth_date"]) > max_age:
+        return None
+    try:
+        user = json.loads(fields.get("user", ""))
+    except ValueError:
+        return None
+    return user if isinstance(user, dict) else None
+
+
 def verify_signature(header: str, body: bytes, secret: str, tolerance: float = 1800,
                      now: float | None = None) -> bool:
     """ElevenLabs-Signature: "t=<unix>,v0=<hex hmac-sha256 of '<t>.<body>'>"."""

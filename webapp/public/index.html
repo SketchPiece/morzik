@@ -25,13 +25,23 @@
   .cat video, .cat.on img { opacity: 0 }
   .cat.on video { opacity: 1 }
   h1 { font-family: Unbounded, Inter, sans-serif; font-weight: 600; font-size: 34px; letter-spacing: -.01em; margin-top: 8px }
-  p { margin-top: 12px; font-size: 16px; line-height: 1.45; color: #b9c3e6 }
+  p { margin-top: 12px; font-size: 16px; line-height: 1.45; color: #b9c3e6; min-height: 1.45em }
+  .call { margin-top: 28px; width: 76px; height: 76px; border: 0; border-radius: 50%; background: #2fbf71; color: #fff;
+          display: grid; place-items: center; cursor: pointer; transition: background .2s, transform .1s; -webkit-tap-highlight-color: transparent }
+  .call:active { transform: scale(.94) }
+  .call svg { width: 34px; height: 34px; transition: transform .2s }
+  .call.live { background: #e5484d }
+  .call.live svg { transform: rotate(135deg) }
+  .call:disabled { opacity: .5 }
 </style>
 </head>
 <body>
   <div class="cat"><img src="morzik-dizzy.png" alt=""><video id="v" muted loop autoplay playsinline preload="auto"></video></div>
-  <h1>Скоро</h1>
-  <p>тут будет всё, что Морзик умеет,<br>а пока у него голова кругом</p>
+  <h1>Морзик</h1>
+  <p id="status">позвони, поболтаем</p>
+  <button class="call" id="call" aria-label="Позвонить">
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25 11.4 11.4 0 0 0 3.6.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1z"/></svg>
+  </button>
 <script>
 // Всё внутри функции: Telegram на iPhone встраивает в страницу свой код, и глобальный const с тем же именем
 // (tg, v…) ронял весь этот скрипт ещё до запуска — ни полного экрана, ни цвета шапки, ни видео.
@@ -52,6 +62,51 @@
   v.addEventListener('playing', () => v.parentElement.classList.add('on'), { once: true });
   v.play().catch(() => {});
 })();
+</script>
+<script type="module">
+// Звонок: сервер Морзика проверяет подпись Telegram (initData) и что это пользователь, выдаёт одноразовый токен
+// звонка ElevenLabs и что агент должен знать (память, последняя переписка, время). Модуль — своя область
+// видимости, с кодом Telegram на iPhone не пересекается.
+import { Conversation } from 'https://esm.sh/@elevenlabs/client@1.30.0';
+
+const START = 'https://sketch-server.tail923acf.ts.net/voice/start';
+const tg = window.Telegram && Telegram.WebApp;
+const button = document.getElementById('call'), status = document.getElementById('status');
+let call = null, busy = false;
+
+const say = text => { status.textContent = text; };
+const haptic = kind => tg?.HapticFeedback?.impactOccurred?.(kind);
+const live = on => { button.classList.toggle('live', on); button.setAttribute('aria-label', on ? 'Завершить' : 'Позвонить'); };
+
+async function start() {
+  if (!tg?.initData) return say('открой меня из Telegram');
+  busy = true; button.disabled = true; haptic('medium'); say('звоню…');
+  try {
+    const res = await fetch(START, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                     body: JSON.stringify({ initData: tg.initData }) });
+    if (!res.ok) throw new Error(res.status === 403 ? 'это не твой Морзик' : `сервер ответил ${res.status}`);
+    const { conversationToken, dynamicVariables } = await res.json();
+    call = await Conversation.startSession({
+      conversationToken, connectionType: 'webrtc', dynamicVariables,
+      onConnect: () => { live(true); say('на линии'); },
+      onModeChange: ({ mode }) => say(mode === 'speaking' ? 'говорит…' : 'слушает'),
+      onDisconnect: () => { call = null; live(false); say('звонок закончен'); },
+      onError: message => say(`ошибка: ${message}`),
+    });
+  } catch (error) {
+    call = null; live(false);
+    say(/Permission|NotAllowed/i.test(String(error)) ? 'нужен доступ к микрофону' : `не вышло: ${error.message || error}`);
+  } finally {
+    busy = false; button.disabled = false;
+  }
+}
+
+async function stop() {
+  haptic('light');
+  await call?.endSession();
+}
+
+button.addEventListener('click', () => { if (!busy) (call ? stop : start)(); });
 </script>
 </body>
 </html>
