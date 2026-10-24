@@ -411,7 +411,6 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     if (en === 'ask' || en === 'meow') lu += (.24 - lu) * ek;
     lu = spring(dt, 'lidU', lu + .7 * py, 3, .8); ll = spring(dt, 'lidL', ll + .5 * py, 3, .8);
     eyes.forEach(E => {
-      if (soul.lids) { E.lid.updateWorldMatrix(true, false); E.lu.uLidInv.value.copy(E.lid.matrixWorld).invert(); E.lu.uLids.value.set(lu, 2.2, ll, 2.8); }
       // Смех — глаза-дужки «∩», мурлычет — закрытые «‿», хитрит — полуприкрытые.
       const joy = en === 'laugh' && ek > .45, purr = en === 'purr' && ek > .45;
       E.lid.visible = !idle && !joy && !purr; E.shut.visible = idle || purr; E.joy.visible = joy; E.halo.material.opacity = idle ? .25 : E.halo.material.opacity;
@@ -419,6 +418,10 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
       E.lid.scale.y = Math.max(.06, (en === 'excited' ? 1 : open) * lidK);
       // soul.focus: зрачки чуть сведены к носу — взгляд сходится на тебе, а не уходит в бесконечность.
       E.pupil.position.set(px + (soul.focus ? -E.sx * .014 : 0), py, .004);
+      // Моргает по-старому (глаз сплющивается целиком): на время моргания веки расходятся, иначе это вторая анимация поверх.
+      // Считать после того, как глазу задан масштаб этого кадра, иначе веки режут по прошлому кадру.
+      const bk = ease((open - .5) / .5);
+      if (soul.lids) { E.lid.updateWorldMatrix(true, false); E.lu.uLidInv.value.copy(E.lid.matrixWorld).invert(); E.lu.uLids.value.set(lu + (.3 - lu) * (1 - bk), 2.2, ll + (-.3 - ll) * (1 - bk), 2.8); }
       E.pupil.scale.set(.04 * dil, .175 - .02 * (dil - 1), 1);
     });
     // Уши запаздывают за головой (качнулась голова — уши догоняют) и иногда дёргаются сами.
