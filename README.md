@@ -68,7 +68,7 @@ design/
   avatar/      animated avatar render (MP4, GIF, PNG)
   canvas/      design canvases: picking the character, an app instead of a menu, the login screen
   readme/      the banner at the top of this page
-greeter/       jokes for the login screen
+greeter/       the login screen on the server laptop: pixel Morzik, jokes, keyboard games, sounds
 subscriptions/ MCP event polling and durable queue for background processing
 voice/         latency bench for the voice endpoint
 webapp/
