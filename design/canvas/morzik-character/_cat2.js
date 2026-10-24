@@ -136,6 +136,8 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     const h1 = new THREE.Mesh(new THREE.CircleGeometry(.05, 24), hi); h1.position.set(.07, .09, .008); lid.add(h1);
     const h2 = new THREE.Mesh(new THREE.CircleGeometry(.022, 16), hi); h2.position.set(-.06, -.1, .008); lid.add(h2);
     const halo = sprite('rgba(255,170,50,.45)', .62, .7, V(0, 0, -.01), g);
+    // Свечение — плоская картинка, а морда выпуклая: с проверкой глубины середину съедала голова (видно при закрытых глазах).
+    halo.material.depthTest = false; halo.renderOrder = 1;
     pupil.userData.base = sx * .048;
     // Спиральки и обычная радужка — две материи одного круга: состояние меняется на лету (set ниже).
     const amber = iris.material, spiral = new THREE.MeshBasicMaterial({ map: spiralTex, toneMapped: false });
@@ -145,6 +147,9 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     // Смеётся: глаза-дужки «∩», как у довольного кота.
     const joy = new THREE.Mesh(new THREE.TubeGeometry(new THREE.QuadraticBezierCurve3(V(-.17, -.05, .01), V(0, .11, .01), V(.17, -.05, .01)), 24, .02, 8), glow(0xFFB43A));
     joy.visible = false; g.add(joy);
+    // Глаз рисуется после свечения (оно без проверки глубины), иначе свечение ложится на зрачок.
+    spiral.transparent = true;
+    [...lid.children, shut, joy].forEach(o => { o.renderOrder = 2; o.material.transparent = true; });
     return { lid, pupil, halo, sx, iris, shut, joy, amber, spiral };
   });
 
