@@ -1,0 +1,4 @@
+name: morzik-login
+version: "0.1.0"
+description: Morzik asks the user to log in to a site in his browser through the Morzik App (request_login)
+author: Morzik
