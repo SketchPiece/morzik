@@ -332,7 +332,7 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
   const kick = (key, dv) => { if (S[key]) S[key].v += dv; };
   const noise = (T, a, b, c) => .5 * Math.sin(T * a + c) + .3 * Math.sin(T * b + c * 2.3) + .2 * Math.sin(T * (a + b) * .7 + c * .5);
   const emo = { name: null, at: -9, dur: 0 };
-  const ev = { blink: 1.5, blinkAt: -9, dbl: false, saccade: 0, gx: 0, gy: 0, flick: 3, flickAt: -9, flickEar: 1, nodAt: -9, pose: 0, tx: 0, ty: 0, tz: 0, fast: 0, slow: 0, talk: 0, quiet: 0 };
+  const ev = { blink: 1.5, blinkAt: -9, dbl: false, saccade: 0, gx: 0, gy: 0, flick: 3, flickAt: -9, flickEar: 1, nodAt: -9, pose: 0, tx: 0, ty: 0, tz: 0, smileNext: 2, smileAt: -9, smileK: 0, smileDur: 1, fast: 0, slow: 0, talk: 0, quiet: 0 };
   function callFrame(t, w, T) {
     let dt = lastT == null ? null : T - lastT; lastT = T;
     if (dt != null && (dt <= 0 || dt > .25 || frozen != null)) dt = null;
@@ -398,16 +398,18 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     cat.rotation.y = 0;
     // soul.lids: верхнее и нижнее веко (в координатах глаза, радужка ±0,2 × ±0,235). Расслабленный взгляд — верхнее
     // чуть прикрыто; говорит — нижнее приподнято (улыбка глазами); думает — прищур; хитрит — тяжёлые веки; восторг — распахнуты.
-    let lu = .17, ll = -.3;
-    if (call === 'listening') lu = .2;
-    if (call === 'speaking') { lu = .165; ll = -.2; }
-    if (call === 'thinking') lu = .12;
+    // Чтобы веки не приедались: верхнее медленно гуляет по шуму, улыбка глазами — не всю реплику, а изредка
+    // (раз в 3–9 с, своя сила и длина), плюс на смехе; в остальное время нижнего века не видно.
+    if (dt != null && call === 'speaking' && T > ev.smileNext) { ev.smileAt = T; ev.smileK = rand(.35, 1); ev.smileDur = rand(.8, 2.2); ev.smileNext = T + rand(3, 9); }
+    const smile = call === 'speaking' ? ev.smileK * Math.min(ease((T - ev.smileAt) / .3), 1 - ease((T - ev.smileAt - ev.smileDur) / .5)) : 0;
+    let lu = .2 + .025 * noise(T, .23, .61, 5), ll = -.3 + .1 * smile;
+    if (call === 'listening') lu += .02;
+    if (call === 'thinking') lu = .14 + .02 * noise(T, .4, .9, 6);
     if (call === 'ringing') lu = .3;
     if (en === 'smug') { lu += (.04 - lu) * ek; ll += (-.17 - ll) * ek; }
     if (en === 'excited') { lu += (.3 - lu) * ek; ll += (-.3 - ll) * ek; }
     if (en === 'ask' || en === 'meow') lu += (.24 - lu) * ek;
     lu = spring(dt, 'lidU', lu + .7 * py, 3, .8); ll = spring(dt, 'lidL', ll + .5 * py, 3, .8);
-    const tremor = soul.focus ? .0025 : 0;
     eyes.forEach(E => {
       if (soul.lids) { E.lid.updateWorldMatrix(true, false); E.lu.uLidInv.value.copy(E.lid.matrixWorld).invert(); E.lu.uLids.value.set(lu, 2.2, ll, 2.8); }
       // Смех — глаза-дужки «∩», мурлычет — закрытые «‿», хитрит — полуприкрытые.
@@ -415,8 +417,8 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
       E.lid.visible = !idle && !joy && !purr; E.shut.visible = idle || purr; E.joy.visible = joy; E.halo.material.opacity = idle ? .25 : E.halo.material.opacity;
       const lidK = en === 'laugh' || en === 'purr' ? 1 - .94 * Math.min(1, ek * 2.2) : en === 'smug' ? 1 - .45 * ek : 1;
       E.lid.scale.y = Math.max(.06, (en === 'excited' ? 1 : open) * lidK);
-      // soul.focus: зрачки чуть сведены к носу — взгляд сходится на тебе, а не уходит в бесконечность; мелкая дрожь.
-      E.pupil.position.set(px + (soul.focus ? -E.sx * .014 : 0) + tremor * Math.sin(T * 37 + E.sx), py + tremor * Math.sin(T * 29 + 1), .004);
+      // soul.focus: зрачки чуть сведены к носу — взгляд сходится на тебе, а не уходит в бесконечность.
+      E.pupil.position.set(px + (soul.focus ? -E.sx * .014 : 0), py, .004);
       E.pupil.scale.set(.04 * dil, .175 - .02 * (dil - 1), 1);
     });
     // Уши запаздывают за головой (качнулась голова — уши догоняют) и иногда дёргаются сами.

@@ -71,7 +71,7 @@ let call = null, busy = false, mode = 'listening', thinking = false, timer = nul
 // Голова показывает состояние звонка вместо надписи: до звонка спит, на гудках просыпается, слушает, думает
 // (Морзик спрашивает свой мозг, perform_task), говорит; ошибка — глаза-спиральки.
 const box = document.querySelector('.cat'), canvas = document.getElementById('head');
-const head = morzikCat2(canvas, { size: Math.round(box.clientWidth), headOnly: true, transparent: true, call: 'idle', callStyle: 'both' });
+const head = morzikCat2(canvas, { size: Math.round(box.clientWidth), headOnly: true, transparent: true, call: 'idle', callStyle: 'both', soul: { focus: true, lids: true } });
 requestAnimationFrame(() => box.classList.add('on'));
 const show = () => head.set(mode === 'speaking' ? 'speaking' : thinking ? 'thinking' : 'listening');
 
