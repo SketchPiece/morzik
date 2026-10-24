@@ -142,7 +142,10 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     // Закрытый глаз (до звонка): тонкая янтарная дужка «‿» вместо радужки, как будто спит.
     const shut = new THREE.Mesh(new THREE.TubeGeometry(new THREE.QuadraticBezierCurve3(V(-.17, .01, .01), V(0, -.11, .01), V(.17, .01, .01)), 24, .018, 8), glow(0xFFB43A));
     shut.visible = false; g.add(shut);
-    return { lid, pupil, halo, sx, iris, shut, amber, spiral };
+    // Смеётся: глаза-дужки «∩», как у довольного кота.
+    const joy = new THREE.Mesh(new THREE.TubeGeometry(new THREE.QuadraticBezierCurve3(V(-.17, -.05, .01), V(0, .11, .01), V(.17, -.05, .01)), 24, .02, 8), glow(0xFFB43A));
+    joy.visible = false; g.add(joy);
+    return { lid, pupil, halo, sx, iris, shut, joy, amber, spiral };
   });
 
   // Усы-морзянка как у первого чёрного кота: по три с каждой стороны, каждый целиком из точек и тире «·–··–».
@@ -289,6 +292,7 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
   };
   const kick = (key, dv) => { if (S[key]) S[key].v += dv; };
   const noise = (T, a, b, c) => .5 * Math.sin(T * a + c) + .3 * Math.sin(T * b + c * 2.3) + .2 * Math.sin(T * (a + b) * .7 + c * .5);
+  const emo = { name: null, at: -9, dur: 0 };
   const ev = { blink: 1.5, blinkAt: -9, dbl: false, saccade: 0, gx: 0, gy: 0, flick: 3, flickAt: -9, flickEar: 1, nodAt: -9, pose: 0, tx: 0, ty: 0, tz: 0, fast: 0, slow: 0, talk: 0, quiet: 0 };
   function callFrame(t, w, T) {
     let dt = lastT == null ? null : T - lastT; lastT = T;
@@ -335,14 +339,25 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     // Думает: смотрит вверх-вбок (взгляд скачет по точкам там), голова чуть отвёрнута.
     if (mime && call === 'thinking') Object.assign(P, { hy: P.hy + .07, hx: P.hx - .07, hz: P.hz - .04 });
     if (mime && call === 'speaking') Object.assign(P, { earF: .3, hx: P.hx + .02 * L, hp: P.hp + .008 * L });
+    // Эмоция (emote): плавно входит за 0,18 с, держится dur, уходит за 0,35 с; добавляется к позе состояния.
+    const ek = !idle && emo.name ? Math.min(ease((T - emo.at) / .18), 1 - ease((T - emo.at - emo.dur) / .35)) : 0, en = ek > 0 ? emo.name : null;
+    if (en === 'laugh') Object.assign(P, { hx: P.hx + .025 * ek * Math.sin(T * Math.PI * 2 * 5), earF: P.earF - .3 * ek, hp: P.hp + .01 * ek });
+    if (en === 'smug') Object.assign(P, { px: P.px + .03 * ek, hz: P.hz + .07 * ek, hy: P.hy + .05 * ek, earT: P.earT + .25 * ek });
+    if (en === 'excited') Object.assign(P, { earF: Math.max(P.earF, ek), dil: P.dil + .5 * ek });
+    if (en === 'purr') Object.assign(P, { hz: P.hz + .08 * ek * Math.sin(T * 1.6), earF: P.earF - .2 * ek });
+    if (en === 'meow') Object.assign(P, { earF: P.earF + .6 * ek, hz: P.hz + .09 * ek, hx: P.hx - .03 * ek });
+    if (en === 'ask') Object.assign(P, { hz: P.hz + .12 * ek, hy: P.hy + .04 * ek, earF: P.earF + .6 * ek });
     const hx = spring(dt, 'hx', P.hx, 1.4, .5), hy = spring(dt, 'hy', P.hy, 1.2, .55), hz = spring(dt, 'hz', P.hz, 1.3, .5), hp = spring(dt, 'hp', P.hp, 2, .5);
     const px = spring(dt, 'px', P.px, 7, .85), py = spring(dt, 'py', P.py, 7, .85), dil = spring(dt, 'dil', P.dil, 1, 1);
     const earF = spring(dt, 'earF', P.earF, 2.5, .4), earT = spring(dt, 'earT', P.earT, 4, .4);
     head.rotation.set(hx, hy, hz); head.position.y = .3 + hp;
     cat.rotation.y = 0;
     eyes.forEach(E => {
-      E.lid.visible = !idle; E.shut.visible = idle; E.halo.material.opacity = idle ? .25 : E.halo.material.opacity;
-      E.lid.scale.y = Math.max(.06, open); E.pupil.position.set(px, py, .004);
+      // Смех — глаза-дужки «∩», мурлычет — закрытые «‿», хитрит — полуприкрытые.
+      const joy = en === 'laugh' && ek > .45, purr = en === 'purr' && ek > .45;
+      E.lid.visible = !idle && !joy && !purr; E.shut.visible = idle || purr; E.joy.visible = joy; E.halo.material.opacity = idle ? .25 : E.halo.material.opacity;
+      const lidK = en === 'laugh' || en === 'purr' ? 1 - .94 * Math.min(1, ek * 2.2) : en === 'smug' ? 1 - .45 * ek : 1;
+      E.lid.scale.y = Math.max(.06, (en === 'excited' ? 1 : open) * lidK); E.pupil.position.set(px, py, .004);
       E.pupil.scale.set(.04 * dil, .175 - .02 * (dil - 1), 1);
     });
     // Уши запаздывают за головой (качнулась голова — уши догоняют) и иногда дёргаются сами.
@@ -400,7 +415,7 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     if (arm) arm.rotation.z = paws === 'wave' ? -.08 + .22 * Math.sin(t * Math.PI * 2) : .02 * Math.sin(t / 4 * Math.PI * 2);
     cat.rotation.y = .12 * Math.sin(w);
     eyes.forEach(E => { E.iris.material = dizzy ? E.spiral : E.amber; E.pupil.visible = !dizzy; if (!dizzy) E.iris.rotation.z = 0;
-      if (!call) { E.lid.visible = true; E.shut.visible = false; } });
+      if (!call) { E.lid.visible = true; E.shut.visible = E.joy.visible = false; } });
     if (!call) mouthIn.visible = mouthTongue.visible = false;
     if (dizzy) {
       // Цикл CALM = 8 с: спиральки делают целое число оборотов в разные стороны, голова плывёт по кругу.
@@ -418,15 +433,22 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     renderer.render(scene, camera);
     ctxs.forEach((x, i) => { const s = mirrors[i].width; x.clearRect(0, 0, s, s); x.save(); x.beginPath(); x.arc(s / 2, s / 2, s / 2, 0, Math.PI * 2); x.clip(); x.drawImage(canvas, 0, 0, s, s); x.restore(); });
   }
+  // Управление живой головой (приложение): set('idle' | 'ringing' | 'listening' | 'thinking' | 'speaking' | 'dizzy'),
+  // setLevel(T => число или { v, wide }) — голос из звонка (null — фразы-макеты).
+  const api = {
+    set(state) { dizzy = state === 'dizzy'; call = dizzy ? null : state; },
+    setLevel(fn) { level = fn; },
+    // Эмоция по смыслу реплики: 'laugh', 'smug', 'excited', 'purr', 'meow', 'ask' (вопрос — голова набок), 'exclaim' (кивок).
+    emote(name, dur = 1.5) {
+      const T = lastT ?? 0;
+      if (name === 'exclaim') { kick('hx', .6); kick('hp', .1); ev.nodAt = T; return; }
+      Object.assign(emo, { name, at: T, dur }); if (name === 'excited') kick('hp', .2);
+    },
+  };
   // manual: кадры по запросу (для экспорта аватарки), без цикла анимации.
-  if (manual) return { frame, loop: CALM };
+  if (manual) return { frame, loop: CALM, ...api };
   if (frozen != null) { frame(frozen); return; }
   const t0 = performance.now();
   renderer.setAnimationLoop(now => frame((now - t0) / 1000));
-  // Управление живой головой (приложение): set('idle' | 'ringing' | 'listening' | 'thinking' | 'speaking' | 'dizzy'),
-  // setLevel(T => число или { v, wide }) — голос из звонка (null — фразы-макеты).
-  return {
-    set(state) { dizzy = state === 'dizzy'; call = dizzy ? null : state; },
-    setLevel(fn) { level = fn; },
-  };
+  return api;
 }
