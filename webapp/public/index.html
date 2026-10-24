@@ -63,6 +63,21 @@
 // видимости, с кодом Telegram на iPhone не пересекается.
 import { Conversation } from 'https://esm.sh/@elevenlabs/client@1.30.0';
 
+// Микрофон один на всё открытие Mini App: Telegram спрашивает доступ при каждом getUserMedia, а SDK зовёт его
+// на каждый звонок. Первый звонок берёт главный поток, SDK получает его копии и закрывает их сам; главный
+// живёт до закрытия приложения (на iPhone всё это время горит оранжевая точка) или 10 минут без звонков.
+const media = navigator.mediaDevices, askMic = media?.getUserMedia.bind(media);
+let mic = null, micIdle = null;
+const releaseMic = () => { mic?.then(stream => stream.getTracks().forEach(t => t.stop()), () => {}); mic = null; };
+if (askMic) media.getUserMedia = async constraints => {
+  if (!constraints?.audio || constraints.video) return askMic(constraints);
+  if (!mic) mic = askMic({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+  let stream;
+  try { stream = await mic; } catch (error) { mic = null; throw error; }
+  if (stream.getAudioTracks().some(t => t.readyState === 'ended')) { mic = null; return media.getUserMedia(constraints); }
+  return new MediaStream(stream.getAudioTracks().map(t => t.clone()));
+};
+
 const START = 'https://sketch-server.<tailnet>.ts.net/voice/start';
 const tg = window.Telegram && Telegram.WebApp;
 const button = document.getElementById('call'), status = document.getElementById('status');
@@ -172,6 +187,7 @@ const fail = text => { failed = true; clock(false); head.set('dizzy'); say(text)
 
 async function start() {
   if (!tg?.initData) return say('открой меня из Telegram');
+  clearTimeout(micIdle);
   busy = true; button.disabled = true; haptic('medium'); say(''); head.set('ringing'); live(true);
   mode = 'listening'; thinking = false; failed = false; turn = null;
   try {
@@ -190,7 +206,7 @@ async function start() {
       onAgentToolRequest: ({ tool_name }) => { if (tool_name !== 'end_call') { thinking = true; show(); } },
       onAgentToolResponse: () => { thinking = false; show(); },
       onDisconnect: details => {
-        call = null; live(false);
+        call = null; live(false); micIdle = setTimeout(releaseMic, 10 * 60 * 1000);
         if (failed) return; // ошибка уже на экране, пусть остаётся
         if (details?.reason === 'error') return fail(`связь оборвалась${details.message ? `: ${details.message}` : ''}`);
         clock(false); head.set('idle'); say('звонок закончен');
@@ -198,7 +214,7 @@ async function start() {
       onError: message => fail(`ошибка: ${message}`),
     });
   } catch (error) {
-    call = null; live(false);
+    call = null; live(false); micIdle = setTimeout(releaseMic, 10 * 60 * 1000);
     fail(/Permission|NotAllowed/i.test(String(error)) ? 'нужен доступ к микрофону' : `не вышло: ${error.message || error}`);
   } finally {
     busy = false; button.disabled = false;
