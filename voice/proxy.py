@@ -10,7 +10,8 @@ Routes (all POST; everything else is 404):
   Morzik in Hermes; one Hermes session per call.
 - /voice/after-call — ElevenLabs post-call webhook (HMAC, MORZIK_VOICE_WEBHOOK_SECRET): Morzik reads
   the transcript and saves what matters to memory.
-- /voice/start — the Mini App itself (CORS from MORZIK_VOICE_APP_ORIGIN): Telegram initData signed for
+- /voice/start — the Mini App (CORS from MORZIK_VOICE_APP_ORIGIN) or the Morzik App (appToken: a device token
+  of its chat, checked against ~/.hermes/morzik-app/chat.db). The Mini App brings Telegram initData signed for
   this bot and the user's user id -> a one-time ElevenLabs conversation token (MORZIK_ELEVENLABS_AGENT_KEY)
   plus the snapshot as dynamic variables. No other door to start a call: the agent is private.
 
@@ -429,12 +430,16 @@ class Handler(BaseHTTPRequestHandler):
     def start(self, body: dict) -> None:
         """Mini App: the user starts a call -> conversation token and what the agent should know."""
         s = self.settings
-        user = brain.verify_init_data(str(body.get("initData") or ""), s["bot_token"])
-        if user is None:
-            return self.reply(401, "bad initData")
-        if str(user.get("id")) != str(s["telegram_user_id"]):
-            log.warning("call start refused for Telegram user %s", user.get("id"))
-            return self.reply(403, "not allowed")
+        if "appToken" in body:  # the Morzik App on the user's phone
+            if not brain.verify_app_token(str(body.get("appToken") or ""), s["hermes_home"]):
+                return self.reply(401, "bad app token")
+        else:
+            user = brain.verify_init_data(str(body.get("initData") or ""), s["bot_token"])
+            if user is None:
+                return self.reply(401, "bad initData")
+            if str(user.get("id")) != str(s["telegram_user_id"]):
+                log.warning("call start refused for Telegram user %s", user.get("id"))
+                return self.reply(403, "not allowed")
         # The snapshot (calendar, weather...) is gathered while ElevenLabs hands out the token.
         snapshot: list = []
         snap = threading.Thread(target=lambda: snapshot.append(self.snapshot()), daemon=True)
@@ -449,7 +454,7 @@ class Handler(BaseHTTPRequestHandler):
         except (urllib.error.URLError, OSError, ValueError, KeyError) as exc:
             log.warning("conversation token failed: %s", exc)
             return self.reply(502, "elevenlabs unavailable")
-        log.info("call started from the Mini App")
+        log.info("call started from the %s", "Morzik App" if "appToken" in body else "Mini App")
         snap.join(timeout=5)
         variables = snapshot[0] if snapshot else brain.snapshot(s["hermes_home"])
         variables["greeting"] = next_greeting()

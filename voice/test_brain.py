@@ -49,7 +49,7 @@ def make_home(root: pathlib.Path, messages=()) -> pathlib.Path:
     db = sqlite3.connect(root / "state.db")
     db.execute("CREATE TABLE sessions (id TEXT, source TEXT)")
     db.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, content TEXT, timestamp REAL)")
-    db.execute("INSERT INTO sessions VALUES ('tg', 'telegram'), ('api', 'api_server')")
+    db.execute("INSERT INTO sessions VALUES ('tg', 'telegram'), ('api', 'api_server'), ('app', 'morzik_app')")
     db.executemany("INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)", messages)
     db.commit()
     db.close()
@@ -65,6 +65,30 @@ class BrainTest(unittest.TestCase):
         self.assertFalse(brain.verify_signature(signed(body, stamp=int(time.time()) - 7200), body, SECRET))
         self.assertFalse(brain.verify_signature("", body, SECRET))
         self.assertFalse(brain.verify_signature(signed(body), body, ""))
+
+    def test_recent_messages_include_the_app_chat(self):
+        now = time.time()
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(pathlib.Path(tmp), [
+                ("tg", "user", "из телеграма", now - 60), ("app", "user", "из приложения", now - 30)])
+            lines = brain.recent_messages(home / "state.db", now=now).splitlines()
+        self.assertEqual([l.split(": ", 1)[1] for l in lines], ["из телеграма", "из приложения"])
+
+    def test_app_token(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = pathlib.Path(tmp)
+            (home / "morzik-app").mkdir()
+            db = sqlite3.connect(home / "morzik-app" / "chat.db")
+            db.execute("CREATE TABLE devices (id TEXT, token_hash TEXT, revoked INTEGER)")
+            db.execute("INSERT INTO devices VALUES ('d1', ?, 0), ('d2', ?, 1)",
+                       (hashlib.sha256(b"good").hexdigest(), hashlib.sha256(b"revoked").hexdigest()))
+            db.commit()
+            db.close()
+            self.assertTrue(brain.verify_app_token("good", home))
+            self.assertFalse(brain.verify_app_token("revoked", home))
+            self.assertFalse(brain.verify_app_token("other", home))
+            self.assertFalse(brain.verify_app_token("", home))
+            self.assertFalse(brain.verify_app_token("good", home / "missing"))
 
     def test_recent_messages_only_telegram_and_fresh(self):
         now = time.time()
@@ -228,6 +252,17 @@ class RoutesTest(unittest.TestCase):
         self.assertEqual(status, 401)
         self.assertEqual(headers["Access-Control-Allow-Origin"], "https://morzik.pieces.run")
         self.assertEqual(self.post("/voice/start", None, method="OPTIONS")[0], 204)
+        self.assertEqual(self.post("/voice/start", {"appToken": "nope"})[0], 401)
+        app_dir = proxy.Handler.settings["hermes_home"] / "morzik-app"
+        app_dir.mkdir(exist_ok=True)
+        db = sqlite3.connect(app_dir / "chat.db")
+        db.execute("CREATE TABLE IF NOT EXISTS devices (id TEXT, token_hash TEXT, revoked INTEGER)")
+        db.execute("INSERT INTO devices VALUES ('d1', ?, 0)", (hashlib.sha256(b"phone").hexdigest(),))
+        db.commit()
+        db.close()
+        status, data = self.post("/voice/start", {"appToken": "phone"})
+        self.assertEqual(status, 200)
+        self.assertEqual(data["conversationToken"], "tok_123")
         self.assertEqual(self.post("/voice/ask", None, method="OPTIONS")[0], 404)
 
     def test_context_needs_its_own_key(self):

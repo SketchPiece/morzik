@@ -69,7 +69,7 @@ def _read(path: pathlib.Path) -> str:
 
 def recent_messages(db_path: pathlib.Path, limit: int = 20, max_age_days: float = 3,
                     max_chars: int = 400, now: float | None = None) -> str:
-    """The latest Telegram exchange with the user, oldest first, as plain lines."""
+    """The latest exchange with the user (Telegram and the Morzik App), oldest first, as plain lines."""
     now = time.time() if now is None else now
     try:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
@@ -78,7 +78,7 @@ def recent_messages(db_path: pathlib.Path, limit: int = 20, max_age_days: float 
     try:
         rows = conn.execute(
             "SELECT m.role, m.content, m.timestamp FROM messages m JOIN sessions s ON s.id = m.session_id "
-            "WHERE s.source = 'telegram' AND m.role IN ('user', 'assistant') AND m.content IS NOT NULL "
+            "WHERE s.source IN ('telegram', 'morzik_app') AND m.role IN ('user', 'assistant') AND m.content IS NOT NULL "
             "AND trim(m.content) != '' AND m.timestamp >= ? ORDER BY m.timestamp DESC LIMIT ?",
             (now - max_age_days * 86400, limit)).fetchall()
     except sqlite3.Error:
@@ -259,6 +259,24 @@ def verify_init_data(init_data: str, bot_token: str, max_age: float = 86400,
     except ValueError:
         return None
     return user if isinstance(user, dict) else None
+
+
+def verify_app_token(token: str, hermes_home: pathlib.Path) -> bool:
+    """A device token of the Morzik App (its own chat database keeps only the hashes)."""
+    if not token or len(token) > 200:
+        return False
+    try:
+        conn = sqlite3.connect(f"file:{hermes_home / 'morzik-app' / 'chat.db'}?mode=ro", uri=True, timeout=5)
+    except sqlite3.Error:
+        return False
+    try:
+        digest = hashlib.sha256(token.encode()).hexdigest()
+        row = conn.execute("SELECT token_hash FROM devices WHERE token_hash=? AND revoked=0", (digest,)).fetchone()
+    except sqlite3.Error:
+        return False
+    finally:
+        conn.close()
+    return row is not None and hmac.compare_digest(row[0], digest)
 
 
 def verify_signature(header: str, body: bytes, secret: str, tolerance: float = 1800,
