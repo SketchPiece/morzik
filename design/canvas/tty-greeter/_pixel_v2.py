@@ -71,9 +71,9 @@ def build(lid=0, look=0, tongue=2, ear=0.0, glow="Y"):
                 g[y][xx] = "h" if x == 4 else "H"
     # eyes: big amber ovals, vertical slit pupils, shine at the top left
     for cx in (12.5, 27.5):
-        cells = [(x, y) for y in range(H) for x in range(W) if inside_ellipse(x + .5, y + .5, cx, 16.5, 3.6, 4.4)]
+        cells = [(x, y) for y in range(H) for x in range(W) if inside_ellipse(x + .5, y + .5, cx, 16.5, 2.8, 4.4)]
         for x, y in cells:
-            edge = not inside_ellipse(x + .5, y + .5, cx, 16.5, 2.6, 3.6)
+            edge = not inside_ellipse(x + .5, y + .5, cx, 16.5, 1.8, 3.6)
             g[y][x] = "o" if edge and y >= 17 else "O"
         px = int(cx) + look                     # both pupils start in the middle of the eye
         for y in range(14, 20):
