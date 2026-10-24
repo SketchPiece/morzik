@@ -89,6 +89,50 @@ class BrainTest(unittest.TestCase):
         self.assertEqual(snap["recent"], "(давно не переписывались)")
         self.assertEqual(snap["now"], "пятница, 23 октября 2026, 17:05")
 
+    def test_calendar_text(self):
+        text = brain.calendar_text([
+            {"title": "Daily Meeting", "all_day": False, "location": None,
+             "start": "2026-10-26T11:00:00", "end": "2026-10-26T11:30:00"},
+            {"title": "Dentist", "all_day": False, "location": "Downtown,  Springfield",
+             "start": "2026-10-27T12:00:00", "end": "2026-10-27T12:45:00"},
+            {"title": "День рождения", "all_day": True, "start": "2026-10-26", "end": "2026-10-27"}])
+        self.assertEqual(text.splitlines(), [
+            "понедельник, 26 октября:", "- 11:00–11:30 Daily Meeting", "- весь день День рождения",
+            "вторник, 27 октября:", "- 12:00–12:45 Dentist (Downtown, Springfield)"])
+
+    def test_reminders_text(self):
+        now = datetime.datetime(2026, 10, 24, 12, 0)
+        text = brain.reminders_text([
+            {"title": "Без срока", "due": None},
+            {"title": "Отменить подписку", "due": "2026-10-25"},
+            {"title": "Оплатить домен", "due": "2026-10-24T10:00:00"},
+            {"title": "Сделано", "due": "2026-10-23", "completed": True}], now)
+        self.assertEqual(text.splitlines(), [
+            "Оплатить домен (срок: суббота, 24 октября 10:00, просрочено)",
+            "Отменить подписку (срок: воскресенье, 25 октября)"])
+
+    def test_weather_text(self):
+        text = brain.weather_text({
+            "current": {"temperature_2m": 5.4, "weather_code": 2},
+            "daily": {"time": ["2026-10-24"], "weather_code": [61], "temperature_2m_min": [4.9],
+                      "temperature_2m_max": [10.4], "precipitation_probability_max": [73]}})
+        self.assertEqual(text.splitlines(), [
+            "сейчас 5 °C, переменная облачность",
+            "суббота, 24 октября: от 5 до 10 °C, дождь, вероятность осадков 73%"])
+
+    def test_snapshot_live_sources_never_block(self):
+        def broken():
+            raise OSError("bridge down")
+        with tempfile.TemporaryDirectory() as tmp:
+            started = time.monotonic()
+            snap = brain.snapshot(make_home(pathlib.Path(tmp)), sources={
+                "calendar": lambda: "понедельник: Daily", "reminders": broken,
+                "weather": lambda: time.sleep(3) or "поздно"}, timeout=0.3)
+        self.assertLess(time.monotonic() - started, 1)
+        self.assertEqual(snap["calendar"], "понедельник: Daily")
+        self.assertEqual(snap["reminders"], brain.UNAVAILABLE)
+        self.assertEqual(snap["weather"], brain.UNAVAILABLE)
+
     def test_init_data(self):
         self.assertEqual(brain.verify_init_data(init_data(), BOT)["id"], OWNER)
         self.assertIsNone(brain.verify_init_data(init_data(), "999:other-bot"))
