@@ -119,7 +119,12 @@ const newTurn = () => {
   if (turn?.start && turn.end && turn.len > 40) { const sec = (turn.end - turn.start) / 1000; if (sec > 1.5) rate = Math.min(22, Math.max(9, .7 * rate + .3 * turn.len / sec)); }
   turn = { start: mode === 'speaking' ? performance.now() : null, end: null, len: 0, cues: null };
 };
+// Временная диагностика синхронизации (24.10): в логе nginx видно, когда пришёл текст реплики относительно начала
+// речи (ms, отрицательное — до неё) и приходят ли тайминги букв ElevenLabs. Убрать, когда разберёмся.
+const diag = q => fetch(`/diag?${new URLSearchParams(q)}`, { keepalive: true }).catch(() => {});
+let aligns = 0;
 const heard = ({ source, role, message }) => {
+  if (role === 'agent') diag({ ev: 'msg', speaking: mode, ms: turn?.start ? Math.round(performance.now() - turn.start) : 'none', len: (message || '').length, tags: ((message || '').match(/\[[a-z ]+\]/gi) || []).join(''), rate: rate.toFixed(1), aligns, old: turn?.len ? 1 : 0 });
   if (source === 'user' || role === 'user') { cues.forEach(clearTimeout); cues = []; turn = null; return; }
   if (!turn || turn.len) newTurn();
   const { plain, out } = cueTimes(message || ''); turn.len = plain.length; turn.cues = out; schedule();
@@ -154,6 +159,7 @@ async function start() {
       onConnect: () => { clock(true); show(); },
       onModeChange: next => { mode = next.mode; spoke(mode); show(); },
       onMessage: heard,
+      onAudioAlignment: () => { aligns++; },
       onInterruption: () => { cues.forEach(clearTimeout); cues = []; },
       // Инструмент мозга: пока он работает, Морзик думает (заполнитель перед ним он при этом говорит).
       onAgentToolRequest: ({ tool_name }) => { if (tool_name !== 'end_call') { thinking = true; show(); } },
