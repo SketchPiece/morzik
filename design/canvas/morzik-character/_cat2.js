@@ -10,7 +10,8 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
   // call — состояние звонка вместо надписи: 'idle' (до звонка), 'ringing', 'listening', 'thinking', 'speaking'.
   // callStyle — чем оно показано: 'cat' — мимикой (уши, взгляд, наклон головы), 'whiskers' — бегущим светом по усам, 'both' — и тем и другим,
   // 'waves' — кольцами вокруг головы (их рисует страница в onFrame(t, level), модель только жива). Рот говорит во всех.
-  // level(t) — громкость голоса 0…1 (в звонке getInputVolume/getOutputVolume), без неё — синтетическая речь.
+  // level(T) — голос: число 0…1 или { v, wide } (wide 0…1: «о» → «и»); в звонке из анализатора звука, без неё — фразы-макеты.
+  // T — время с начала в секундах, не зацикленное: в звонке анимация не повторяется.
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true, alpha: transparent });
   renderer.setPixelRatio(2); renderer.setSize(size, size, false);
   renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
@@ -206,65 +207,129 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
   const blink = (t, c) => { const p = (t - c) / .26; return p > 0 && p < 1 ? 1 - Math.sin(Math.PI * p) : 1; };
   const ctxs = mirrors.map(c => c.getContext('2d'));
 
-  // Синтетическая речь для макетов: слоги ~4 в секунду, фраза 3 с и пауза; целое число периодов в цикле 8 с.
-  const voice = (t, d = 0) => { const p = (t + d) % 4, on = ease(p / .15) - ease((p - 3) / .25);
-    return on * Math.max(0, Math.sin((t + d) * Math.PI * 2 * 4.25)) ** .6 * (.6 + .4 * Math.sin((t + d) * Math.PI * 2 * 1.25 + 1)); };
+  // Речь для макетов (без level): настоящие фразы, разобранные на слоги. Ударный слог громче и длиннее,
+  // между слогами голос проседает на согласных, у каждого слога своя гласная: и/е/э/ы — рот шире, о/у/ё/ю — круглее.
+  // В звонке вместо этого — громкость и спектр настоящего голоса (level возвращает число или { v, wide }).
+  const speech = (phrases, seed) => {
+    let r = seed; const rnd = () => (r = (r * 16807) % 2147483647) / 2147483647;
+    const syl = []; let at = .3;
+    phrases.forEach(ph => {
+      ph.split(' ').forEach(word => {
+        const vs = [...word.matchAll(/[аеёиоуыэюяАЕЁИОУЫЭЮЯ]́?/g)].map(m => m[0]);
+        vs.forEach(v => {
+          const stress = v.length > 1 || vs.length === 1 && word.length > 3, dur = (stress ? .25 : .14) + rnd() * .05;
+          syl.push({ at, dur, amp: stress ? .95 : .55 + rnd() * .2, wide: /[иеэы]/i.test(v) ? 1 : /[оуёю]/i.test(v) ? 0 : .5 });
+          at += dur + .03;
+        });
+        at += /[,—]$/.test(word) ? .3 : /[.!?]$/.test(word) ? .65 : .04;
+      });
+      at += .5;
+    });
+    return T => {
+      T %= at; let v = 0, wide = .5;
+      for (const s of syl) {
+        if (T < s.at - .05) break;
+        const p = (T - s.at) / s.dur; if (p < -.3 || p > 1.3) continue;
+        const k = s.amp * Math.min(ease((p + .3) / .5), 1 - ease((p - .8) / .5));
+        if (k > v) { v = k; wide = s.wide; }
+      }
+      return { v, wide };
+    };
+  };
+  const morzikSays = speech(['Приве́т! Я тут поду́мал про твой календа́рь.', 'Во вто́рник у тебя́ три встре́чи подря́д, дава́й одну́ перенесём?',
+    'Мо́жно на четве́рг, там свобо́дно по́сле обе́да.'], 7);
+  const userSays = speech(['Слу́шай, а что у меня́ за́втра?', 'Мне ну́жно успе́ть в спортза́л ве́чером, и ещё забра́ть посы́лку.'], 3);
   // Звонок гудит: два гудка и пауза каждые 2 с.
   const ring = t => { const p = t % 2; return bump(p, 0, .32) + bump(p, .42, .32); };
   const glowTo = (m, k) => { (m.userData.base ??= m.color.clone()); m.color.copy(m.userData.base).multiplyScalar(k); if (!transparent) m.opacity = 1; };
-  // Плавность: громкость и поза не прыгают к цели, а догоняют её (экспонента с постоянной tau, в секундах).
-  // Голос быстро нарастает и мягче спадает. Отдельный кадр (t, manual не по порядку) ставит цели сразу.
-  const sm = {}; let lastT = null;
-  const follow = (dt, key, v, tau) => (sm[key] = dt == null || sm[key] == null ? v : sm[key] + (v - sm[key]) * (1 - Math.exp(-dt / tau)));
-  function callFrame(t, w) {
-    let dt = lastT == null ? null : t - lastT; lastT = t;
-    if (dt != null && dt < 0) dt += CALM; if (dt != null && (dt > .25 || frozen != null)) dt = null;
-    const raw = call === 'listening' || call === 'speaking' ? (level ? level(t) : voice(t, call === 'listening' ? 1.7 : 0)) : 0;
-    const L = follow(dt, 'L', raw, raw > (sm.L ?? 0) ? .05 : .12);
-    const R = call === 'ringing' ? ring(t) : 0, mime = callStyle === 'cat' || callStyle === 'both', idle = call === 'idle';
-    // Спокойная база: без косоглазия и язычка, моргает три раза за цикл, голова почти не крутится.
-    const open = Math.min(blink(t, 1.3), blink(t, 4.6), blink(t, 7.1));
-    const P = { px: 0, py: 0, dil: 1, earF: 0, earT: 0, hx: .015 * Math.sin(w), hy: .02 * Math.sin(w), hz: .025 * Math.sin(w), hp: .015 * Math.sin(w * 2) };
-    if (mime && call === 'ringing') Object.assign(P, { earF: .5 + .5 * R, dil: 1.8, hp: P.hp + .02 * R });
-    // Слушает: уши вперёд и вздрагивают на голос, голова склонена набок, зрачки круглые.
-    if (mime && call === 'listening') Object.assign(P, { earF: 1, earT: .08 * L, dil: 3.2, hz: .11 + .015 * Math.sin(w), hx: .02 + .04 * L });
-    // Думает: смотрит вверх-вбок, взгляд медленно перебегает, ухо дёргается.
-    if (mime && call === 'thinking') Object.assign(P, { px: .045 + .012 * Math.sin(w * 2), py: .06, hy: .07, hx: -.07, hz: -.04,
-      earT: .2 * (bump(t, 2.2, .45) + bump(t, 5.6, .45)) });
-    if (mime && call === 'speaking') Object.assign(P, { earF: .3, hx: P.hx + .03 * L, hp: P.hp + .01 * L });
-    Object.keys(P).forEach(k => P[k] = follow(dt, k, P[k], .22));
-    const { px, py, dil, earF, earT } = P;
-    head.rotation.set(P.hx, P.hy, P.hz); head.position.y = .3 + P.hp;
-    cat.rotation.y = .03 * Math.sin(w);
+
+  // Живость: всё, что движется, — пружины (догоняют цель с лёгким перелётом), а моргания, взгляды и подёргивания ушей
+  // случаются в случайные моменты, поэтому анимация не повторяется. Голова плавает по медленному шуму.
+  const S = {}; let lastT = null, seed = 11;
+  const rand = (a, b) => a + (b - a) * ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const spring = (dt, key, target, f, z) => {
+    const s = S[key] ??= { x: target, v: 0 };
+    if (dt == null) { s.x = target; s.v = 0; return s.x; }
+    const w0 = Math.PI * 2 * f, n = Math.ceil(dt * 240), h = dt / n;
+    for (let i = 0; i < n; i++) { s.v += (w0 * w0 * (target - s.x) - 2 * z * w0 * s.v) * h; s.x += s.v * h; }
+    return s.x;
+  };
+  const kick = (key, dv) => { if (S[key]) S[key].v += dv; };
+  const noise = (T, a, b, c) => .5 * Math.sin(T * a + c) + .3 * Math.sin(T * b + c * 2.3) + .2 * Math.sin(T * (a + b) * .7 + c * .5);
+  const ev = { blink: 1.5, blinkAt: -9, dbl: false, saccade: 0, gx: 0, gy: 0, flick: 3, flickAt: -9, flickEar: 1, nodAt: -9, fast: 0, slow: 0, talk: 0, quiet: 0 };
+  function callFrame(t, w, T) {
+    let dt = lastT == null ? null : T - lastT; lastT = T;
+    if (dt != null && (dt <= 0 || dt > .25 || frozen != null)) dt = null;
+    const R = call === 'ringing' ? ring(T) : 0, mime = callStyle === 'cat' || callStyle === 'both', idle = call === 'idle';
+    const src = call === 'speaking' ? (level || morzikSays) : call === 'listening' ? (level || userSays) : null;
+    const got = src ? src(T) : 0, raw = typeof got === 'number' ? got : got.v, wide = typeof got === 'number' ? .5 : got.wide;
+    const L = Math.max(0, spring(dt, 'L', raw, 14, .85));
+
+    // События. Моргает раз в 2–6 с, иногда дважды; взгляд перескакивает раз в 0,6–2,5 с; ухо дёргается раз в 4–10 с.
+    if (dt != null) {
+      if (T > ev.blink) { ev.blinkAt = T; ev.dbl = rand(0, 1) < .15; ev.blink = T + rand(2, call === 'thinking' ? 3.5 : 6); }
+      if (T > ev.saccade) { const th = call === 'thinking'; ev.gx = (th ? .04 : 0) + rand(-1, 1) * (th ? .025 : .012); ev.gy = (th ? .055 : 0) + rand(-1, 1) * (th ? .015 : .008); ev.saccade = T + rand(.6, th ? 1.4 : 2.5); }
+      if (T > ev.flick) { ev.flickAt = T; ev.flickEar = rand(0, 1) < .5 ? 0 : 1; ev.flick = T + rand(4, call === 'thinking' ? 6 : 10); }
+      // Кивки на ударениях: громкость резко выросла над средней (говорит он) — короткий кивок; ты договорил фразу — «угу».
+      const a1 = 1 - Math.exp(-dt / .04), a2 = 1 - Math.exp(-dt / .45);
+      ev.fast += (raw - ev.fast) * a1; ev.slow += (raw - ev.slow) * a2;
+      if (call === 'speaking' && ev.fast - ev.slow > .22 && ev.fast > .7 && T - ev.nodAt > .5) { ev.nodAt = T; kick('hx', 1.1 * (ev.fast - ev.slow)); kick('hp', .25 * (ev.fast - ev.slow)); }
+      if (raw > .1) { ev.talk += dt; ev.quiet = 0; } else ev.quiet += dt;
+      if (call === 'listening' && ev.quiet > .45 && ev.talk > 1.2) { ev.talk = 0; if (rand(0, 1) < .7) { kick('hx', .45); ev.blink = Math.min(ev.blink, T + .15); } }
+      if (call !== 'listening') ev.talk = 0;
+    }
+    const bl = p => p < 0 || p > 1 ? 1 : p < .35 ? 1 - ease(p / .35) : ease((p - .35) / .65);
+    const open = Math.min(bl((T - ev.blinkAt) / .2), ev.dbl ? bl((T - ev.blinkAt - .28) / .2) : 1);
+    const flick = bump(T - ev.flickAt, 0, .22) - .5 * bump(T - ev.flickAt, .22, .2);
+
+    // Цели позы для состояния; дыхание и медленный шум поверх.
+    const P = { px: ev.gx, py: ev.gy, dil: 1, earF: 0, earT: 0,
+      hx: .012 * noise(T, .7, 1.9, 1) + (idle ? .025 * Math.sin(T * Math.PI / 2) : 0), hy: .025 * noise(T, .5, 1.3, 2), hz: .02 * noise(T, .6, 1.7, 3), hp: .012 * Math.sin(T * Math.PI / 2) };
+    if (idle) Object.assign(P, { px: 0, py: 0 });
+    if (mime && call === 'ringing') Object.assign(P, { earF: .5 + .5 * R, dil: 1.3, hp: P.hp + .02 * R });
+    // Слушает: уши вперёд и вздрагивают на голос, голова склонена набок.
+    if (mime && call === 'listening') Object.assign(P, { earF: 1, earT: .08 * L, dil: 1.5, hz: P.hz + .11, hx: P.hx + .02 + .03 * L });
+    // Думает: смотрит вверх-вбок (взгляд скачет по точкам там), голова чуть отвёрнута.
+    if (mime && call === 'thinking') Object.assign(P, { hy: P.hy + .07, hx: P.hx - .07, hz: P.hz - .04 });
+    if (mime && call === 'speaking') Object.assign(P, { earF: .3, hx: P.hx + .02 * L, hp: P.hp + .008 * L });
+    const hx = spring(dt, 'hx', P.hx, 1.4, .5), hy = spring(dt, 'hy', P.hy, 1.2, .55), hz = spring(dt, 'hz', P.hz, 1.3, .5), hp = spring(dt, 'hp', P.hp, 2, .5);
+    const px = spring(dt, 'px', P.px, 7, .85), py = spring(dt, 'py', P.py, 7, .85), dil = spring(dt, 'dil', P.dil, 1, 1);
+    const earF = spring(dt, 'earF', P.earF, 2.5, .4), earT = spring(dt, 'earT', P.earT, 4, .4);
+    head.rotation.set(hx, hy, hz); head.position.y = .3 + hp;
+    cat.rotation.y = 0;
     eyes.forEach(E => {
       E.lid.visible = !idle; E.shut.visible = idle; E.halo.material.opacity = idle ? .25 : E.halo.material.opacity;
       E.lid.scale.y = Math.max(.06, open); E.pupil.position.set(px, py, .004);
       E.pupil.scale.set(.04 * dil, .175 - .02 * (dil - 1), 1);
     });
-    ears.forEach((e, i) => { const sx = i ? 1 : -1; e.rotation.x = -.12 + .3 * earF; e.rotation.z = -sx * (.36 - .1 * earF - earT * (i ? 1 : .4)); });
-    // Рот: щёлочка открывается по громкости голоса Морзика.
-    const m = call === 'speaking' ? L : 0;
+    // Уши запаздывают за головой (качнулась голова — уши догоняют) и иногда дёргаются сами.
+    const lag = S.hz ? S.hz.v * .12 : 0, lagX = S.hx ? S.hx.v * .2 : 0;
+    ears.forEach((e, i) => { const sx = i ? 1 : -1;
+      e.rotation.x = -.12 + .3 * earF - lagX;
+      e.rotation.z = -sx * (.36 - .1 * earF - earT * (i ? 1 : .4) - (i === ev.flickEar ? .25 * flick : 0)) - lag; });
+    // Рот: открывается по громкости, форма — по гласной: шире на «и», круглее на «о».
+    const m = call === 'speaking' ? Math.min(1, L * 1.1) : 0, wd = spring(dt, 'wide', wide, 6, .9);
     gap.visible = tongue.visible = m > .04;
-    gap.scale.set(.1, .015 + .085 * m, .03); gap.position.y = -.36 - .05 * m;
-    tongue.scale.set(.065, .035 * m, .035); tongue.position.y = -.38 - .09 * m;
-    // Наушники: на линии огонёк горит ровно, на гудках вспыхивает.
+    gap.scale.set(.075 + .045 * wd, .015 + (.065 + .035 * (1 - wd)) * m, .03); gap.position.y = -.36 - .05 * m;
+    tongue.scale.set(.05 + .025 * wd, .035 * m, .035); tongue.position.y = -.38 - .09 * m;
+    // Наушники: на линии огонёк горит ровно, на гудках вспыхивает, до звонка почти погас.
     leds.forEach(l => glowTo(l.material, idle ? .15 : call === 'ringing' ? .35 + .8 * R : .9 + .25 * L));
     // До звонка не подключён: глаза закрыты, усы еле тлеют и медленно дышат.
-    if (idle) whiskerMats.forEach(mat => glowTo(mat, .4 + .12 * Math.sin(w * 2)));
+    if (idle) whiskerMats.forEach(mat => glowTo(mat, .4 + .12 * Math.sin(T * Math.PI / 2)));
     if (callStyle === 'whiskers' || callStyle === 'both') whiskerMats.forEach(mat => {
       const u = mat.userData.u, front = (pos, wd = .14) => Math.exp(-(((u - pos) / wd) ** 2));
       let k = .55;
-      if (call === 'ringing') k = .35 + 1.3 * Math.max(front((t % 2) / .3 - .05), front(((t % 2) - .42) / .3 - .05));
+      if (call === 'ringing') k = .35 + 1.3 * Math.max(front((T % 2) / .3 - .05), front(((T % 2) - .42) / .3 - .05));
       // Слушает — свет бежит по усам к мордочке, говорит — от мордочки; яркость по громкости.
-      if (call === 'listening') k = .35 + 1.3 * L * (.5 + .5 * Math.cos(Math.PI * 2 * (2 * u + 1.5 * t))) ** 3;
-      if (call === 'speaking') k = .35 + 1.3 * L * (.5 + .5 * Math.cos(Math.PI * 2 * (2 * u - 1.5 * t))) ** 3;
-      if (call === 'thinking') k = .35 + 1.3 * front(.5 - .5 * Math.cos(Math.PI * (t + mat.userData.row * 3)), .09);
+      if (call === 'listening') k = .35 + 1.3 * L * (.5 + .5 * Math.cos(Math.PI * 2 * (2 * u + 1.5 * T))) ** 3;
+      if (call === 'speaking') k = .35 + 1.3 * L * (.5 + .5 * Math.cos(Math.PI * 2 * (2 * u - 1.5 * T))) ** 3;
+      if (call === 'thinking') k = .35 + 1.3 * front(.5 - .5 * Math.cos(Math.PI * (T + mat.userData.row * 3)), .09);
       glowTo(mat, k);
     });
-    onFrame?.(t, L, R);
+    onFrame?.(T, L, R);
   }
   function frame(t) {
-    t = ((t % CALM) + CALM) % CALM;
+    const T = t; t = ((t % CALM) + CALM) % CALM;
     const w = t / CALM * Math.PI * 2;
     const g = (.94 + .06 * Math.sin(w)) * (1 - .3 * bump(t, 5.1, .16));
     // Сценка: косит → собирает зрачки к центру → смотрит влево, вправо → в центр → глаза снова разъезжаются.
@@ -305,7 +370,7 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     starRing.children.forEach((st, i) => { st.lookAt(camera.position); st.rotateZ(w * 4 + i); st.scale.setScalar(.8 + .25 * Math.sin(w * 6 + i * 1.3)); });
     whiskerMats.forEach(m => pulse(m, .6 + .4 * g));
     leds.forEach(l => pulse(l.material, .5 + .5 * g));
-    if (call) callFrame(t, w);
+    if (call) callFrame(t, w, T);
     renderer.render(scene, camera);
     ctxs.forEach((x, i) => { const s = mirrors[i].width; x.clearRect(0, 0, s, s); x.save(); x.beginPath(); x.arc(s / 2, s / 2, s / 2, 0, Math.PI * 2); x.clip(); x.drawImage(canvas, 0, 0, s, s); x.restore(); });
   }
