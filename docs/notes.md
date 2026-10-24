@@ -55,7 +55,7 @@
 На сервере:
 
 - службы — systemd user units пользователя `morzik`: `hermes-gateway` (Telegram, cron, api_server; видит экран `DISPLAY=:1`), `morzik-voice` (голосовой прокси), `morzik-screen` (TigerVNC 1440×900), `morzik-wm` (Openbox), `morzik-chrome` (Chrome с профилем `~/.config/morzik-chrome`, CDP на `127.0.0.1:9222`), `morzik-novnc`. Управлять: `sudo -u morzik XDG_RUNTIME_DIR=/run/user/$(id -u morzik) systemctl --user …`, лог шлюза — `/home/morzik/.hermes/logs/gateway.log`.
-- экран Морзика смотреть и входить в аккаунты — noVNC `https://sketch-server.tail923acf.ts.net:6080/vnc.html` (только tailnet, пароль: `sudo cat /home/morzik/.vnc/password.txt` на сервере). Браузер (Browser Use, `browser_exec`) и computer use (cua-driver) работают в этом же Chrome на этом же экране, так что входы, сделанные руками, Морзик видит.
+- экран Морзика смотреть и входить в аккаунты — с телефона через Morzik App (раздел «Вход на сайты с телефона»). Прямой noVNC на 6080 закрыт с 23.10.2026, там теперь шлюз входа. С Мака — туннель `ssh -L 5901:127.0.0.1:5901 sketch-server-mi@sketch-server` и «Общий экран» на `vnc://localhost:5901` (пароль: `sudo cat /home/morzik/.vnc/password.txt` на сервере). Браузер (Browser Use, `browser_exec`) и computer use (cua-driver) работают в этом же Chrome на этом же экране, так что входы, сделанные руками, Морзик видит.
 - Telegram: `mcp_servers.semafor` — Semafor Server на этом же сервере (`http://127.0.0.1:8790/mcp`, заголовок `Authorization: ${SEMAFOR_MCP_AUTH}` из `.env`), с 23.10.2026. Это отдельный headless-клиент Telegram только для чтения, от Мака не зависит; подробнее в разделе «Telegram (Semafor Server)». До этого был `ssh` на Мак ключом `~/.ssh/semafor_mac` к `semafor-mcp` из Semafor (forced command в `authorized_keys` Мака); ключ остался, старый блок — в `config.yaml.bak-2026-10-23-before-semafor-server`.
 - Календарь и Напоминания: `mcp_servers.apple.url` = `https://<mac>.tail923acf.ts.net:8765/mcp` (мост открыт в tailnet через `tailscale serve` на Маке).
 - часовой пояс сервера — <local tz>, как у расписаний.
@@ -117,6 +117,22 @@ Telegram пользователя Морзик читает через [semafor-
 - `chat_id` в формате Bot API (`-100…` у каналов и супергрупп), с id из Semafor на Маке не совпадают. `@username` работает везде.
 - События (MCP Events, poll): `telegram.message_received` — новое входящее сообщение. Аргументы подписки: `chats` (список chat_id или @username), `private` (все личные чаты с людьми, кроме ботов, архива и чатов без звука), `mentions` (упоминания и ответы пользователю в группах). Сервер присылает всё подряд, что важно, решает Морзик. Подписки пока нет; добавить — файл `subscriptions/<id>.md` с `server: semafor`, `event: telegram.message_received`, `arguments: {"private": true, "mentions": true}`.
 - Обновить сервер: `deploy/deploy.sh` из репозитория semafor-server на Маке.
+
+## Вход на сайты с телефона
+
+Когда сайту в браузере Морзика нужен пользователь (пароль, код 2FA, капча), Морзик зовёт инструмент `request_login`. Тот открывает страницу во вкладке его Chrome и присылает в чат сообщение с кнопкой «Войти в X». Кнопка открывает `https://morzik.pieces.run/login.html?r=<id>`: Face ID, и сразу экран Морзика. Пользователь входит сам, Морзик пароль не видит. «Готово» или «Не сейчас» возвращают ответ Морзику: инструмент ждёт до 15 минут, сообщение в чате тоже прерывает ожидание. После ответа кнопка из сообщения убирается.
+
+```
+телефон (Telegram, Tailscale включён) → https://sketch-server.<tailnet>.ts.net:6080 (tailscale serve, только tailnet)
+  → шлюз login/gate.py на Unix-сокете ~/.morzik-login/gate.sock → websockify 127.0.0.1:6080 → TigerVNC 127.0.0.1:5901
+```
+
+- Пускает только при трёх условиях сразу. Первое — tailnet: учётка `MORZIK_LOGIN_TAILNET_USER` и устройство из `MORZIK_LOGIN_DEVICES` (сейчас `<phone>,<mac>`, имена из `tailscale status`). Имя устройства шлюз узнаёт через `tailscale whois` по адресу, который подставляет Serve. Сам сервер и хостинг залогинены той же учёткой Tailscale, поэтому важна проверка именно устройства. Второе — подпись Telegram: `initData` бота, ID пользователя, не старше 15 минут. Третье — Face ID: ключ устройства лежит в биометрическом хранилище Telegram (`BiometricManager`), шлюз хранит только его хэш.
+- Первый телефон запоминается сам. Новое устройство можно добавить, только открыв окно на сервере: `sudo -u morzik python3 /home/morzik/morzik-login/gate.py allow-enroll 10` (минуты). Сбросить все устройства — удалить `/home/morzik/.morzik-login/devices.json`.
+- Пароль VNC шлюз отдаёт странице сам, после всех проверок. Websocket открывается одноразовым билетом на 60 с.
+- Печатать — в поле под экраном: каждая буква уходит нажатием клавиши, вставка (долгий тап → «Вставить») тоже, так что пароль из 1Password не проходит через чат. «Крупно» — масштаб 1:1, экран двигается пальцем, тап — клик.
+- Код: `login/gate.py` (шлюз), `login/__init__.py` и `plugin.yaml` (плагин `morzik-login`, тулсет `morzik-login` в `platform_toolsets` у telegram и cron), `webapp/public/login.html`. Тесты: `python3 -m unittest login/test_gate.py`. На сервер ставит `morzik/install.sh` из репозитория sketch-server (шаг `setup/62-morzik-login.sh`); служба — `morzik-login` пользователя `morzik`.
+- Проверено 23.10 с Мака через tailnet: ключ, сессия, websocket до VNC (`RFB 003.008`), чужой ключ — 401, запрос с самого сервера — 403 `device`. Face ID в Telegram на телефоне проверяется настоящим входом.
 
 ## Календарь и Напоминания Apple (Morzik Bridge)
 
