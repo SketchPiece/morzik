@@ -209,25 +209,30 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
   // Звонок гудит: два гудка и пауза каждые 2 с.
   const ring = t => { const p = t % 2; return bump(p, 0, .32) + bump(p, .42, .32); };
   const glowTo = (m, k) => { (m.userData.base ??= m.color.clone()); m.color.copy(m.userData.base).multiplyScalar(k); if (!transparent) m.opacity = 1; };
+  // Плавность: громкость и поза не прыгают к цели, а догоняют её (экспонента с постоянной tau, в секундах).
+  // Голос быстро нарастает и мягче спадает. Отдельный кадр (t, manual не по порядку) ставит цели сразу.
+  const sm = {}; let lastT = null;
+  const follow = (dt, key, v, tau) => (sm[key] = dt == null || sm[key] == null ? v : sm[key] + (v - sm[key]) * (1 - Math.exp(-dt / tau)));
   function callFrame(t, w) {
-    const L = call === 'listening' || call === 'speaking' ? (level ? level(t) : voice(t, call === 'listening' ? 1.7 : 0)) : 0;
-    const R = call === 'ringing' ? ring(t) : 0, cat = callStyle === 'cat';
-    // Спокойная база: без косоглазия и язычка, моргает три раза за цикл.
+    let dt = lastT == null ? null : t - lastT; lastT = t;
+    if (dt != null && dt < 0) dt += CALM; if (dt != null && (dt > .25 || frozen != null)) dt = null;
+    const raw = call === 'listening' || call === 'speaking' ? (level ? level(t) : voice(t, call === 'listening' ? 1.7 : 0)) : 0;
+    const L = follow(dt, 'L', raw, raw > (sm.L ?? 0) ? .05 : .12);
+    const R = call === 'ringing' ? ring(t) : 0, mime = callStyle === 'cat';
+    // Спокойная база: без косоглазия и язычка, моргает три раза за цикл, голова почти не крутится.
     const open = Math.min(blink(t, 1.3), blink(t, 4.6), blink(t, 7.1));
-    let px = 0, py = 0, dil = 1, earF = 0, earT = 0;
-    head.rotation.set(.02 * Math.sin(w), .05 * Math.sin(w), .03 * Math.sin(w)); head.position.y = .3 + .015 * Math.sin(w * 2);
-    if (cat && call === 'ringing') { earF = .5 + .5 * R; dil = 1.8; head.position.y += .025 * R; }
-    if (cat && call === 'listening') {
-      // Слушает: уши вперёд и вздрагивают на голос, голова склонена набок, зрачки круглые.
-      earF = 1; earT = .1 * L; dil = 3.2; head.rotation.z = .13 + .02 * Math.sin(w); head.rotation.x = .02 + .05 * L;
-    }
-    if (cat && call === 'thinking') {
-      // Думает: смотрит вверх-вбок, взгляд перебегает, ухо дёргается.
-      const k = ease(t / .5);
-      px = .05 * k + .015 * Math.sin(w * 3); py = .06 * k; head.rotation.y = .14 * k; head.rotation.x = -.09 * k; head.rotation.z = -.05 * k;
-      earT = .25 * (bump(t, 2.2, .3) + bump(t, 5.6, .3));
-    }
-    if (cat && call === 'speaking') { earF = .3; head.rotation.x = .04 * L; head.position.y += .012 * L; }
+    const P = { px: 0, py: 0, dil: 1, earF: 0, earT: 0, hx: .015 * Math.sin(w), hy: .02 * Math.sin(w), hz: .025 * Math.sin(w), hp: .015 * Math.sin(w * 2) };
+    if (mime && call === 'ringing') Object.assign(P, { earF: .5 + .5 * R, dil: 1.8, hp: P.hp + .02 * R });
+    // Слушает: уши вперёд и вздрагивают на голос, голова склонена набок, зрачки круглые.
+    if (mime && call === 'listening') Object.assign(P, { earF: 1, earT: .08 * L, dil: 3.2, hz: .11 + .015 * Math.sin(w), hx: .02 + .04 * L });
+    // Думает: смотрит вверх-вбок, взгляд медленно перебегает, ухо дёргается.
+    if (mime && call === 'thinking') Object.assign(P, { px: .045 + .012 * Math.sin(w * 2), py: .06, hy: .07, hx: -.07, hz: -.04,
+      earT: .2 * (bump(t, 2.2, .45) + bump(t, 5.6, .45)) });
+    if (mime && call === 'speaking') Object.assign(P, { earF: .3, hx: P.hx + .03 * L, hp: P.hp + .01 * L });
+    Object.keys(P).forEach(k => P[k] = follow(dt, k, P[k], .22));
+    const { px, py, dil, earF, earT } = P;
+    head.rotation.set(P.hx, P.hy, P.hz); head.position.y = .3 + P.hp;
+    cat.rotation.y = .03 * Math.sin(w);
     eyes.forEach(E => {
       E.lid.scale.y = Math.max(.06, open); E.pupil.position.set(px, py, .004);
       E.pupil.scale.set(.04 * dil, .175 - .02 * (dil - 1), 1);
