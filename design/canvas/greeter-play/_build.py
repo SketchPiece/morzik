@@ -81,7 +81,7 @@ def look_at(key):
 
 def typing(word, t0, dt=.2):
     """[(time, key, char)] for typing a Russian word on the ЙЦУКЕН layout."""
-    return [(t0 + i * dt, LAT.get(ch, ch), ch) for i, ch in enumerate(word)]
+    return [(t0 + i * dt, LAT.get(ch, "space" if ch == " " else ch), ch) for i, ch in enumerate(word)]
 
 
 def held(t, presses, dur=.12):
@@ -203,7 +203,7 @@ def morse_game():
 
 
 def words():
-    plan = [("кис-кис", .4), ("морзик", 3.6), ("рыба", 7.4), ("мяу", 11.0), ("ж", 14.0)]
+    plan = [("кис кис", .4), ("морзик", 3.6), ("рыба", 7.4), ("мяу", 11.0), ("ж", 14.0)]
     presses = [p for w, t0 in plan for p in typing(w, t0)]
     def f(t):
         s = dict(glow=breath(t), keys=held(t, presses))
@@ -222,7 +222,7 @@ def words():
         if t >= 14.8: s["lid"] = blink(t, [15.4])
         return s
     return dict(file="3-words.html", title="3 · Слова: кис-кис, морзик, рыба, мяу", dur=16.5, f=f,
-                steps=[(0, "«кис-кис» — уши торчком, зрачки шире, приподнимается"), (3.6, "«морзик» — медленно моргает: по-кошачьи «люблю»"),
+                steps=[(0, "«кис кис» — уши торчком, зрачки шире, привстаёт"), (3.6, "«морзик» — медленно моргает: по-кошачьи «люблю»"),
                        (7.4, "«рыба», «вкусняшка» — облизывается"), (11.0, "«мяу» — отвечает мявком"),
                        (14.0, "Просто клавиша — короткий мявк, как сейчас")])
 
