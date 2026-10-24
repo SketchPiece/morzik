@@ -4,7 +4,26 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
-export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [], manual = false, shiftY = 0, tailSide = 1, twitchEar = 1, paws = 'none', headOnly = false, dizzy = false, transparent = false, stars = false, zoom = 1, cross = 1, call = null, callStyle = 'cat', level = null, onFrame = null, soul = {} } = {}) {
+// Губы по буквам: какой рот у звука (open 0…1, wide −0,4 трубочка … 1 широкая улыбка, tongue — язык к нёбу).
+const VIS = { 'а': [1, .55], 'я': [.95, .6], 'о': [.75, 0], 'ё': [.7, .05], 'у': [.4, -.4], 'ю': [.45, -.3], 'ы': [.5, .8], 'и': [.45, 1],
+  'е': [.6, .85], 'э': [.65, .75], 'м': [0, .5], 'б': [0, .5], 'п': [0, .5], 'ф': [.1, .65], 'в': [.12, .65],
+  'л': [.35, .6, 1], 'т': [.3, .65, 1], 'д': [.3, .65, 1], 'н': [.3, .6, 1], 'ш': [.25, -.1], 'щ': [.25, -.1], 'ж': [.25, -.1], 'ч': [.25, .1] };
+const vis = ch => { const v = VIS[ch.toLowerCase()] || [.25, .6]; return { open: v[0], wide: v[1], tongue: v[2] || 0 }; };
+// lets — [{ t: начало, с; d: длительность, с; ch }] по порядку. Рот заранее (≈40 мс) тянется к следующему звуку, как у людей;
+// в паузе дольше 0,15 с закрыт.
+export function lipsAt(lets, T) {
+  T += .04;
+  let i = lets.length - 1; while (i >= 0 && lets[i].t > T) i--;
+  if (i < 0) return { open: 0, wide: .5, tongue: 0 };
+  const a = lets[i], b = lets[i + 1], end = a.t + a.d;
+  if (T > end + .15 && (!b || b.t > T)) return { open: 0, wide: .5, tongue: 0 };
+  const va = vis(a.ch); if (!b) return va;
+  const vb = vis(b.ch);
+  const f = Math.max(0, Math.min(1, 1 - (b.t - T) / Math.max(.03, (b.t - a.t) * .4)));
+  return { open: va.open + (vb.open - va.open) * f * f, wide: va.wide + (vb.wide - va.wide) * f, tongue: va.tongue + (vb.tongue - va.tongue) * f };
+}
+
+export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [], manual = false, shiftY = 0, tailSide = 1, twitchEar = 1, paws = 'none', headOnly = false, dizzy = false, transparent = false, stars = false, zoom = 1, cross = 1, call = null, callStyle = 'cat', level = null, onFrame = null, soul = {}, mouth = 'volume' } = {}) {
   // headOnly — только голова крупным планом (без тела, лапок и хвоста); dizzy — глаза-спиральки крутятся,
   // голова покачивается по кругу; stars — над головой кружат янтарные звёздочки; transparent — без фона.
   // call — состояние звонка вместо надписи: 'idle' (до звонка), 'ringing', 'listening', 'thinking', 'speaking'.
@@ -101,15 +120,22 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
       for (let j = 0; j <= MR; j++) { const y = yt + (yb - yt) * j / MR; p.setXYZ(i * (MR + 1) + j, x, y, surf(x, y) + dz); } }
     p.needsUpdate = true; o.visible = true;
   };
-  // m — насколько открыт (0…1), wd — гласная: 0 «о/у» (уже и глубже), 1 «и/е» (шире и площе).
-  const mouthShape = (m, wd) => {
-    mouthIn.visible = mouthTongue.visible = m > .03; if (!mouthIn.visible) return;
+  // Клычки (mouth: 'fangs'): два белых треугольничка свисают из-под «ω», видны, когда рот открыт.
+  const fangs = [-1, 1].map(sx => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9), 3));
+    const o = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0xF4EEE4, side: THREE.DoubleSide })); o.visible = false; o.frustumCulled = false; o.userData.sx = sx; head.add(o); return o; });
+  // m — насколько открыт (0…1), wd — гласная: 0 «о/у» (уже и глубже), 1 «и/е» (шире и площе), меньше 0 — губы трубочкой («у»);
+  // tg — язык поднят к нёбу (л, т, д, н).
+  const mouthShape = (m, wd, tg = 0) => {
+    mouthIn.visible = mouthTongue.visible = m > .03; fangs.forEach(f => f.visible = false); if (!mouthIn.visible) return;
     // Низ — ровная дуга от уголка до уголка (не повторяет зигзаг «ω»), иначе язык выходит галочкой.
-    const W = .085 + .05 * wd, H = .03 + .16 * m * (1 - .35 * wd), arc = x => Math.sqrt(Math.max(0, 1 - (x / W) ** 2)) ** .8;
+    const W = mouth === 'volume' ? .085 + .05 * wd : .075 + .065 * wd, H = .03 + .16 * m * (1 - .35 * wd), arc = x => Math.sqrt(Math.max(0, 1 - (x / W) ** 2)) ** .8;
     const corner = omegaY(W), low = x => Math.min(omegaY(x) - .01, corner - H * arc(x));
     strip(mouthIn, W, x => omegaY(x) + .012, low, .016);
     const Wt = W * .68, kt = x => Math.sqrt(Math.max(0, 1 - (x / Wt) ** 2));
-    strip(mouthTongue, Wt, x => low(x) + .006 + H * .38 * kt(x), x => low(x) + .006 * (1 - kt(x)), .02);
+    strip(mouthTongue, Wt, x => low(x) + .006 + H * (.38 + .45 * tg) * kt(x), x => low(x) + .006 * (1 - kt(x)), .02);
+    if (mouth === 'fangs' && m > .12) fangs.forEach(f => { const x = f.userData.sx * W * .55, y = omegaY(x) - .004, k = Math.min(1, (m - .12) * 4), p = f.geometry.attributes.position;
+      [[x - .016, y], [x + .016, y], [x + f.userData.sx * .005, y - .055 * k]].forEach(([px, py], i) => p.setXYZ(i, px, py, surf(px, py) + .024));
+      p.needsUpdate = true; f.visible = true; });
   };
 
   // Язычок: пока Морзик косит, рот чуть приоткрыт (тёмная щёлочка под «ω») и оттуда свисает кончик языка.
@@ -287,15 +313,17 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
   // В звонке вместо этого — громкость и спектр настоящего голоса (level возвращает число или { v, wide }).
   const speech = (phrases, seed) => {
     let r = seed; const rnd = () => (r = (r * 16807) % 2147483647) / 2147483647;
-    const syl = []; let at = .3;
+    const syl = [], lets = []; let at = .3;
     phrases.forEach(ph => {
       ph.split(' ').forEach(word => {
         const vs = [...word.matchAll(/[аеёиоуыэюяАЕЁИОУЫЭЮЯ]́?/g)].map(m => m[0]);
-        vs.forEach(v => {
-          const stress = v.length > 1 || vs.length === 1 && word.length > 3, dur = (stress ? .25 : .14) + rnd() * .05;
-          syl.push({ at, dur, amp: stress ? .95 : .55 + rnd() * .2, wide: /[иеэы]/i.test(v) ? 1 : /[оуёю]/i.test(v) ? 0 : .5 });
-          at += dur + .03;
-        });
+        // Гласная — слог (громкость), согласная — короткая буква между ними; буквы со временем — для губ по буквам.
+        for (const [ch] of word.matchAll(/[аеёиоуыэюя]́?|[а-яё]/gi)) {
+          if (ch[0].match(/[аеёиоуыэюя]/i)) { const stress = ch.length > 1 || vs.length === 1 && word.length > 3, dur = (stress ? .25 : .14) + rnd() * .05;
+            syl.push({ at, dur, amp: stress ? .95 : .55 + rnd() * .2, wide: /[иеэы]/i.test(ch) ? 1 : /[оуёю]/i.test(ch) ? 0 : .5 });
+            lets.push({ t: at, d: dur, ch: ch[0] }); at += dur + .03; }
+          else { const dur = .06 + rnd() * .03; lets.push({ t: at, d: dur, ch }); at += dur; }
+        }
         at += /[,—]$/.test(word) ? .3 : /[.!?]$/.test(word) ? .65 : .04;
       });
       at += .5;
@@ -308,7 +336,7 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
         const k = s.amp * Math.min(ease((p + .3) / .5), 1 - ease((p - .8) / .5));
         if (k > v) { v = k; wide = s.wide; }
       }
-      return { v, wide };
+      return { v, wide, ...lipsAt(lets, T) };
     };
   };
   const morzikSays = speech(['Приве́т! Я тут поду́мал про твой календа́рь.', 'Во вто́рник у тебя́ три встре́чи подря́д, дава́й одну́ перенесём?',
@@ -430,8 +458,14 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
       e.rotation.x = -.12 + .3 * earF - lagX;
       e.rotation.z = -sx * (.36 - .1 * earF - earT * (i ? 1 : .4) - (i === ev.flickEar ? .25 * flick : 0)) - lag; });
     // Рот: открывается по громкости, форма — по гласной: шире на «и», круглее на «о».
-    const m = call === 'speaking' ? Math.min(1, L * 1.1) : 0, wd = spring(dt, 'wide', wide, 6, .9);
-    gap.visible = tongue.visible = false; mouthShape(m, wd);
+    // По буквам (mouth: 'letters' / 'fangs', если голос прислал буквы): форма — от звука (м/б/п смыкают губы, «о» круглое,
+    // «у» трубочкой, «и» широкое), громкость лишь подстраивает размах. Открывается быстрее, чем закрывается.
+    let m = call === 'speaking' ? Math.min(1, L * 1.1) : 0, wd = spring(dt, 'wide', wide, 6, .9), tg = 0;
+    if (call === 'speaking' && mouth !== 'volume' && got?.open != null) {
+      const tm = got.open * Math.min(1, .45 + L * .8) * (L > .03 || got.open > 0 ? 1 : 0), up = !S.mO || tm > S.mO.v;
+      m = Math.max(0, spring(dt, 'mO', tm, up ? 24 : 15, 1)); wd = spring(dt, 'mW', got.wide, 16, 1); tg = spring(dt, 'mT', got.tongue || 0, 20, 1);
+    }
+    gap.visible = tongue.visible = false; mouthShape(m, wd, tg);
     // Наушники: на линии огонёк горит ровно, на гудках вспыхивает, до звонка почти погас.
     leds.forEach(l => glowTo(l.material, idle ? .15 : call === 'ringing' ? .35 + .8 * R : .9 + .25 * L));
     // До звонка не подключён: глаза закрыты, усы еле тлеют и медленно дышат.
@@ -480,7 +514,7 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     cat.rotation.y = .12 * Math.sin(w);
     eyes.forEach(E => { E.iris.material = dizzy ? E.spiral : E.amber; E.pupil.visible = !dizzy; if (!dizzy) E.iris.rotation.z = 0;
       if (!call) { E.lid.visible = true; E.shut.visible = E.joy.visible = false; } });
-    if (!call) { mouthIn.visible = mouthTongue.visible = false; eyes.forEach(E => E.lu.uLids.value.set(1, 0, -1, 0)); }
+    if (!call) { mouthIn.visible = mouthTongue.visible = false; fangs.forEach(f => f.visible = false); eyes.forEach(E => E.lu.uLids.value.set(1, 0, -1, 0)); }
     if (dizzy) {
       // Цикл CALM = 8 с: спиральки делают целое число оборотов в разные стороны, голова плывёт по кругу.
       eyes.forEach(E => { E.iris.rotation.z = -E.sx * w * 6; E.lid.scale.y = 1; });

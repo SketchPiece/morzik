@@ -1,0 +1,4 @@
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:600px;height:600px;overflow:hidden;background:radial-gradient(120% 90% at 50% 40%,#34477C 0%,#1a2342 55%,#10172C 100%)}
+/* Голова крупнее, чтобы рот было видно: холст 1000 px, в кадре — глаза и рот. */
+canvas{position:absolute;left:-120px;top:-140px;width:840px;height:840px}
