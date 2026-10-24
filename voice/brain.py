@@ -1,8 +1,10 @@
 """Morzik's voice copy: what the ElevenLabs agent knows at the start of a call and how it gets back.
 
-ElevenLabs runs its own fast model in the call. Before the call the Mini App backend asks for a
-snapshot of Morzik (SOUL, his memory about the user, the latest Telegram messages) and passes it to
-the agent as dynamic variables. During the call the agent hands real work to Morzik in Hermes
+ElevenLabs runs its own fast model in the call. Its character is written in the agent prompt
+(voice/agent-prompt.md, a voice version of SOUL.md: SOUL is half about Telegram formatting and in
+places contradicts the voice rules). Before the call the Mini App backend asks for a snapshot (his
+memory about the user, the latest Telegram messages, the time) and passes it to the agent as dynamic
+variables. During the call the agent hands real work to Morzik in Hermes
 ("ask Morzik" tool). After the call ElevenLabs sends the transcript and Morzik saves what matters.
 
 Standard library only; the HTTP side lives in proxy.py.
@@ -78,12 +80,11 @@ def recent_messages(db_path: pathlib.Path, limit: int = 20, max_age_days: float 
 
 
 def snapshot(hermes_home: pathlib.Path, now: datetime.datetime | None = None) -> dict:
-    """Dynamic variables for the ElevenLabs agent: who Morzik is and what he knows right now."""
+    """Dynamic variables for the ElevenLabs agent: what Morzik knows right now."""
     now = now or datetime.datetime.now()
     memory = "\n\n".join(text for text in (_read(hermes_home / "memories/USER.md"),
                                            _read(hermes_home / "memories/MEMORY.md")) if text)
     return {
-        "soul": _read(hermes_home / "SOUL.md"),
         "memory": memory or "(пусто)",
         "recent": recent_messages(hermes_home / "state.db") or "(давно не переписывались)",
         "now": spoken_time(now),
