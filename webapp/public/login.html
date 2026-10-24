@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="color-scheme" content="dark">
+<title>Вход — Морзик</title>
+<script src="telegram-web-app.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0 }
+  html, body { height: 100%; background: #10172C; color: #fff; font-family: Inter, system-ui, sans-serif; -webkit-font-smoothing: antialiased; overflow: hidden }
+  body {
+    display: flex; flex-direction: column;
+    padding: calc(8px + var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px)) 0 calc(8px + var(--tg-safe-area-inset-bottom, 0px) + var(--tg-content-safe-area-inset-bottom, 0px));
+  }
+  header { padding: 8px 16px 10px; text-align: center }
+  h1 { font-size: 17px; font-weight: 600 }
+  #status { margin-top: 4px; font-size: 14px; color: #b9c3e6; min-height: 1.4em }
+  #screen { flex: 1; min-height: 0; position: relative; background: #0a0f1f }
+  #screen > div { background: #0a0f1f !important }
+  .center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 24px; text-align: center; color: #b9c3e6; font-size: 15px; line-height: 1.45 }
+  .center img { width: 120px; height: 120px }
+  button { border: 0; border-radius: 12px; font: inherit; font-size: 15px; font-weight: 500; color: #fff; background: #2a3763; padding: 12px 16px; cursor: pointer; -webkit-tap-highlight-color: transparent }
+  button:active { transform: scale(.97) }
+  button.main { background: #2fbf71 }
+  footer { display: none; padding: 10px 12px 0; gap: 8px; flex-direction: column }
+  footer.on { display: flex }
+  .row { display: flex; gap: 8px }
+  .row button { flex: 1 }
+  #type { width: 100%; border: 1px solid #34477C; border-radius: 12px; background: #1a2342; color: #fff; font: inherit; font-size: 16px; padding: 11px 14px; outline: none }
+  #type::placeholder { color: #7f8bb5 }
+  [hidden] { display: none !important }
+</style>
+</head>
+<body>
+  <header><h1 id="title">Экран Морзика</h1><p id="status"></p></header>
+  <div id="screen">
+    <div class="center" id="intro">
+      <img src="morzik-dizzy.png" alt="">
+      <p id="introText">Секунду…</p>
+      <button class="main" id="retry" hidden>Ещё раз</button>
+    </div>
+  </div>
+  <footer id="controls">
+    <input id="type" type="text" placeholder="Печатай сюда — уйдёт в браузер" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="send">
+    <div class="row">
+      <button id="zoom">Крупно</button>
+      <button id="cancel">Не сейчас</button>
+      <button class="main" id="done">Готово</button>
+    </div>
+  </footer>
+<script type="module">
+// Вход на сайт в браузере Морзика. Три ключа сразу: Tailscale (до сервера можно добраться только из tailnet,
+// с телефона пользователя), подпись Telegram (initData) и Face ID (ключ устройства, который Telegram отдаёт
+// только после Face ID). Пароль VNC сервер подставляет сам. Подробнее — login/gate.py.
+const GATE = 'https://sketch-server.tail923acf.ts.net:6080';
+const tg = window.Telegram && Telegram.WebApp;
+const bm = tg?.BiometricManager;
+const $ = id => document.getElementById(id);
+const requestId = new URLSearchParams(location.search).get('r') || '';
+let rfb = null, session = null, keysyms = null, finished = false;
+
+if (tg) {
+  tg.ready(); tg.expand(); tg.setHeaderColor('#10172C'); tg.setBackgroundColor('#10172C'); tg.setBottomBarColor?.('#10172C');
+  if (['ios', 'android'].includes(tg.platform) && tg.isVersionAtLeast?.('8.0')) tg.requestFullscreen();
+  tg.disableVerticalSwipes?.();  // a swipe on the screen should move the mouse, not close the app
+}
+
+const say = text => { $('status').textContent = text; };
+const haptic = kind => tg?.HapticFeedback?.notificationOccurred?.(kind);
+function stop(text, retry = true) {
+  $('intro').hidden = false; $('introText').textContent = text; $('retry').hidden = !retry; say('');
+}
+
+class Refused extends Error {}
+async function gate(path, body) {
+  let res;
+  try {
+    res = await fetch(GATE + path, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ initData: tg.initData, ...body }) });
+  } catch {
+    throw new Refused('Не достучался до сервера. Включи Tailscale на телефоне и нажми «Ещё раз».');
+  }
+  const data = await res.json().catch(() => ({}));
+  if (res.ok) return data;
+  const why = {
+    device: 'Это устройство не пускаю: нужен твой телефон в Tailscale.',
+    telegram: 'Telegram не подтвердил, что это ты. Открой кнопку из чата заново.',
+    telegram_user: 'Это не твой Морзик.',
+    enroll_closed: 'Этот телефон я не знаю, а новый можно добавить, только если открыть окно на сервере: gate.py allow-enroll.',
+  }[data.error];
+  const error = new Refused(why || `Сервер ответил ${res.status}.`);
+  error.code = data.error;
+  throw error;
+}
+
+const bmCall = (method, ...args) => new Promise(resolve => bm[method](...args, (...result) => resolve(result)));
+
+async function faceKey(canEnroll) {
+  if (!bm || !tg.isVersionAtLeast?.('7.2')) throw new Refused('Обнови Telegram: нужен вход по Face ID.');
+  if (!bm.isInited) await bmCall('init');
+  if (!bm.isBiometricAvailable) throw new Refused('Telegram не видит Face ID на этом устройстве. Открой с телефона.');
+  if (!bm.isAccessGranted) {
+    if (bm.isAccessRequested) {
+      $('retry').textContent = 'Разрешить Face ID';
+      $('retry').onclick = () => bm.openSettings();
+      throw new Refused('Разреши Морзику Face ID в настройках и вернись сюда.');
+    }
+    const [granted] = await bmCall('requestAccess', { reason: 'Чтобы пускать тебя на экран Морзика' });
+    if (!granted) throw new Refused('Без Face ID не пущу.');
+  }
+  if (!bm.isBiometricTokenSaved) {
+    if (!canEnroll) throw new Refused('Этот телефон я не знаю, а новый можно добавить, только если открыть окно на сервере: gate.py allow-enroll.');
+    say('запоминаю этот телефон…');
+    const { deviceKey } = await gate('/login/enroll', { deviceId: bm.deviceId || '' });
+    const [saved] = await bmCall('updateBiometricToken', deviceKey);
+    if (!saved) throw new Refused('Не получилось сохранить ключ под Face ID.');
+  }
+  const [ok, key] = await bmCall('authenticate', { reason: 'Открыть экран Морзика' });
+  if (!ok || !key) throw new Refused('Face ID не подтвердился.');
+  return key;
+}
+
+async function open() {
+  $('retry').hidden = true; $('retry').textContent = 'Ещё раз'; $('retry').onclick = open;
+  $('introText').textContent = 'Секунду…';
+  if (!tg?.initData) return stop('Открой меня кнопкой из чата с Морзиком.', false);
+  try {
+    say('проверяю…');
+    const state = await gate('/login/state', { request: requestId });
+    if (state.request) $('title').textContent = `Вход в ${state.request.site}`;
+    let reply;
+    try {
+      reply = await gate('/login/session', { deviceKey: await faceKey(state.canEnroll), request: requestId });
+    } catch (error) {
+      if (error.code !== 'device_key' || !state.canEnroll) throw error;
+      await bmCall('updateBiometricToken', '');  // the gate forgot this key: set the phone up again
+      reply = await gate('/login/session', { deviceKey: await faceKey(true), request: requestId });
+    }
+    session = reply.session;
+    await connect(reply);
+  } catch (error) {
+    stop(error instanceof Refused ? error.message : `Не вышло: ${error.message || error}`);
+  }
+}
+
+async function connect({ ticket, password, request }) {
+  say('подключаюсь…');
+  const [{ default: RFB }, keysymdef] = await Promise.all([
+    import(`${GATE}/novnc/core/rfb.js`), import(`${GATE}/novnc/core/input/keysymdef.js`)]);
+  keysyms = keysymdef.default;
+  rfb = new RFB($('screen'), `${GATE.replace('https', 'wss')}/login/ws?ticket=${encodeURIComponent(ticket)}`,
+                { credentials: { password } });
+  rfb.scaleViewport = true;
+  rfb.background = '#0a0f1f';
+  rfb.addEventListener('connect', () => {
+    $('intro').hidden = true; $('controls').classList.add('on'); haptic('success');
+    say(request ? (request.waiting ? 'войди и нажми «Готово»' : 'Морзик уже не ждёт этого входа') : 'экран Морзика');
+  });
+  rfb.addEventListener('disconnect', event => {
+    rfb = null; $('controls').classList.remove('on');
+    if (!finished) stop(event.detail.clean ? 'Экран закрыт.' : 'Связь с экраном пропала.');
+  });
+  rfb.addEventListener('securityfailure', () => stop('Сервер не принял пароль экрана.'));
+}
+
+// Typing: the field is the phone keyboard; each character goes to the screen as a key press.
+// Paste (long tap → Вставить) works the same way, so a password from 1Password goes in without the chat.
+function typeText(text) {
+  for (const ch of text) {
+    const keysym = ch === '\n' ? 0xff0d : keysyms.lookup(ch.codePointAt(0));
+    rfb?.sendKey(keysym, null);
+  }
+}
+$('type').addEventListener('beforeinput', event => {
+  if (!rfb) return;
+  event.preventDefault();
+  const kind = event.inputType;
+  if (kind === 'deleteContentBackward') rfb.sendKey(0xff08, 'Backspace');
+  else if (kind === 'insertLineBreak' || kind === 'insertParagraph') rfb.sendKey(0xff0d, 'Enter');
+  else if (kind === 'insertFromPaste') typeText(event.dataTransfer?.getData('text/plain') || event.data || '');
+  else if (event.data) typeText(event.data);
+});
+$('type').addEventListener('keydown', event => {
+  if (!rfb) return;
+  const special = { Enter: 0xff0d, Tab: 0xff09, Backspace: 0xff08 }[event.key];
+  if (special && !event.isComposing) { event.preventDefault(); rfb.sendKey(special, event.key); }
+});
+
+$('zoom').addEventListener('click', () => {
+  if (!rfb) return;
+  const fit = !rfb.scaleViewport;
+  rfb.scaleViewport = fit; rfb.clipViewport = !fit; rfb.dragViewport = !fit;
+  $('zoom').textContent = fit ? 'Крупно' : 'Целиком';
+  say(fit ? 'весь экран' : 'крупно: двигай пальцем, тап — клик');
+});
+
+async function finish(outcome) {
+  finished = true;
+  try {
+    const { heard } = session ? await gate('/login/done', { session, outcome }) : { heard: false };
+    rfb?.disconnect();
+    stop(heard ? (outcome === 'done' ? 'Готово, Морзик продолжает.' : 'Ок, Морзик понял.')
+               : 'Морзик уже не ждёт: напиши ему в чат.', false);
+    if (heard) setTimeout(() => tg.close(), 1200);
+  } catch (error) {
+    finished = false;
+    say(error.message || 'не вышло, попробуй ещё раз');
+  }
+}
+$('done').addEventListener('click', () => finish('done'));
+$('cancel').addEventListener('click', () => finish('cancel'));
+$('retry').onclick = open;
+
+open();
+</script>
+</body>
+</html>
