@@ -102,8 +102,8 @@ class BrainTest(unittest.TestCase):
             {"role": "user", "message": "Что  завтра?"},
             {"role": "agent", "message": None, "tool_results": [{"result_value": '{"answer": "Дождь"}'}]},
             {"role": "agent", "message": "Завтра дождь."}])
-        self.assertEqual(text, 'Копия: Мрр, привет!\nПользователь: Что завтра?\n(ответ Морзика копии: {"answer": "Дождь"})\n'
-                               "Копия: Завтра дождь.")
+        self.assertEqual(text, 'Морзик: Мрр, привет!\nПользователь: Что завтра?\n(результат инструмента: {"answer": "Дождь"})\n'
+                               "Морзик: Завтра дождь.")
 
 
 class FakeHermes(BaseHTTPRequestHandler):
