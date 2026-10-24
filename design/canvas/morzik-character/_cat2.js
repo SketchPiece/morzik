@@ -4,9 +4,13 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
-export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [], manual = false, shiftY = 0, tailSide = 1, twitchEar = 1, paws = 'none', headOnly = false, dizzy = false, transparent = false, stars = false, zoom = 1, cross = 1 } = {}) {
+export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [], manual = false, shiftY = 0, tailSide = 1, twitchEar = 1, paws = 'none', headOnly = false, dizzy = false, transparent = false, stars = false, zoom = 1, cross = 1, call = null, callStyle = 'cat', level = null, onFrame = null } = {}) {
   // headOnly — только голова крупным планом (без тела, лапок и хвоста); dizzy — глаза-спиральки крутятся,
   // голова покачивается по кругу; stars — над головой кружат янтарные звёздочки; transparent — без фона.
+  // call — состояние звонка вместо надписи: 'idle' (до звонка), 'ringing', 'listening', 'thinking', 'speaking'.
+  // callStyle — чем оно показано: 'cat' — мимикой (уши, взгляд, наклон головы), 'whiskers' — бегущим светом по усам,
+  // 'waves' — кольцами вокруг головы (их рисует страница в onFrame(t, level), модель только жива). Рот говорит во всех.
+  // level(t) — громкость голоса 0…1 (в звонке getInputVolume/getOutputVolume), без неё — синтетическая речь.
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true, alpha: transparent });
   renderer.setPixelRatio(2); renderer.setSize(size, size, false);
   renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
@@ -108,10 +112,12 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
   const whiskerMats = [];
   [-1, 1].forEach(sx => [[.02, .07], [-.06, -.02], [-.14, -.12]].forEach(([y0, y1]) => {
     const a = V(sx * .34, -.24 + y0, surf(.34, -.24 + y0) + .02), b = V(sx * 1.4, -.24 + y1 * 2.2, .66), m = a.clone().lerp(b, .5).add(V(0, .04, .1));
-    const curve = new THREE.QuadraticBezierCurve3(a, m, b), mat = glow(0xFFB43A, .95); whiskerMats.push(mat);
+    const curve = new THREE.QuadraticBezierCurve3(a, m, b);
     const unit = 1 / 11; let u = .02;
     [...'.-..-'].forEach(ch => {
       const len = ch === '.' ? unit * .6 : unit * 1.9;
+      // Своё свечение у каждого знака: по усам бежит свет (callStyle 'whiskers'); u — место на усе, 0 у мордочки.
+      const mat = glow(0xFFB43A, .95); mat.userData.u = u + len / 2; mat.userData.row = y0; whiskerMats.push(mat);
       if (ch === '.') sph(.028, mat, curve.getPoint(u + len / 2), [1, 1, 1], head);
       else tube([0, .5, 1].map(k => curve.getPoint(u + len * k)), .024, mat, head);
       u += len + unit * .7;
@@ -196,6 +202,56 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
   const bump = (t, c, w) => { const p = (t - c) / w; return p > 0 && p < 1 ? Math.sin(Math.PI * p) : 0; };
   const blink = (t, c) => { const p = (t - c) / .26; return p > 0 && p < 1 ? 1 - Math.sin(Math.PI * p) : 1; };
   const ctxs = mirrors.map(c => c.getContext('2d'));
+
+  // Синтетическая речь для макетов: слоги ~4 в секунду, фраза 3 с и пауза; целое число периодов в цикле 8 с.
+  const voice = (t, d = 0) => { const p = (t + d) % 4, on = ease(p / .15) - ease((p - 3) / .25);
+    return on * Math.max(0, Math.sin((t + d) * Math.PI * 2 * 4.25)) ** .6 * (.6 + .4 * Math.sin((t + d) * Math.PI * 2 * 1.25 + 1)); };
+  // Звонок гудит: два гудка и пауза каждые 2 с.
+  const ring = t => { const p = t % 2; return bump(p, 0, .32) + bump(p, .42, .32); };
+  const glowTo = (m, k) => { (m.userData.base ??= m.color.clone()); m.color.copy(m.userData.base).multiplyScalar(k); if (!transparent) m.opacity = 1; };
+  function callFrame(t, w) {
+    const L = call === 'listening' || call === 'speaking' ? (level ? level(t) : voice(t, call === 'listening' ? 1.7 : 0)) : 0;
+    const R = call === 'ringing' ? ring(t) : 0, cat = callStyle === 'cat';
+    // Спокойная база: без косоглазия и язычка, моргает три раза за цикл.
+    const open = Math.min(blink(t, 1.3), blink(t, 4.6), blink(t, 7.1));
+    let px = 0, py = 0, dil = 1, earF = 0, earT = 0;
+    head.rotation.set(.02 * Math.sin(w), .05 * Math.sin(w), .03 * Math.sin(w)); head.position.y = .3 + .015 * Math.sin(w * 2);
+    if (cat && call === 'ringing') { earF = .5 + .5 * R; dil = 1.8; head.position.y += .025 * R; }
+    if (cat && call === 'listening') {
+      // Слушает: уши вперёд и вздрагивают на голос, голова склонена набок, зрачки круглые.
+      earF = 1; earT = .1 * L; dil = 3.2; head.rotation.z = .13 + .02 * Math.sin(w); head.rotation.x = .02 + .05 * L;
+    }
+    if (cat && call === 'thinking') {
+      // Думает: смотрит вверх-вбок, взгляд перебегает, ухо дёргается.
+      const k = ease(t / .5);
+      px = .05 * k + .015 * Math.sin(w * 3); py = .06 * k; head.rotation.y = .14 * k; head.rotation.x = -.09 * k; head.rotation.z = -.05 * k;
+      earT = .25 * (bump(t, 2.2, .3) + bump(t, 5.6, .3));
+    }
+    if (cat && call === 'speaking') { earF = .3; head.rotation.x = .04 * L; head.position.y += .012 * L; }
+    eyes.forEach(E => {
+      E.lid.scale.y = Math.max(.06, open); E.pupil.position.set(px, py, .004);
+      E.pupil.scale.set(.04 * dil, .175 - .02 * (dil - 1), 1);
+    });
+    ears.forEach((e, i) => { const sx = i ? 1 : -1; e.rotation.x = -.12 + .3 * earF; e.rotation.z = -sx * (.36 - .1 * earF - earT * (i ? 1 : .4)); });
+    // Рот: щёлочка открывается по громкости голоса Морзика.
+    const m = call === 'speaking' ? L : 0;
+    gap.visible = tongue.visible = m > .04;
+    gap.scale.set(.1, .015 + .085 * m, .03); gap.position.y = -.36 - .05 * m;
+    tongue.scale.set(.065, .035 * m, .035); tongue.position.y = -.38 - .09 * m;
+    // Наушники: на линии огонёк горит ровно, на гудках вспыхивает.
+    leds.forEach(l => glowTo(l.material, call === 'idle' ? .45 : call === 'ringing' ? .35 + .8 * R : .9 + .25 * L));
+    if (callStyle === 'whiskers') whiskerMats.forEach(mat => {
+      const u = mat.userData.u, front = (pos, wd = .14) => Math.exp(-(((u - pos) / wd) ** 2));
+      let k = .55;
+      if (call === 'ringing') k = .35 + 1.3 * Math.max(front((t % 2) / .3 - .05), front(((t % 2) - .42) / .3 - .05));
+      // Слушает — свет бежит по усам к мордочке, говорит — от мордочки; яркость по громкости.
+      if (call === 'listening') k = .35 + 1.3 * L * (.5 + .5 * Math.cos(Math.PI * 2 * (2 * u + 1.5 * t))) ** 3;
+      if (call === 'speaking') k = .35 + 1.3 * L * (.5 + .5 * Math.cos(Math.PI * 2 * (2 * u - 1.5 * t))) ** 3;
+      if (call === 'thinking') k = .35 + 1.3 * front(.5 - .5 * Math.cos(Math.PI * (t + mat.userData.row * 3)), .09);
+      glowTo(mat, k);
+    });
+    onFrame?.(t, L, R);
+  }
   function frame(t) {
     t = ((t % CALM) + CALM) % CALM;
     const w = t / CALM * Math.PI * 2;
@@ -238,6 +294,7 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     starRing.children.forEach((st, i) => { st.lookAt(camera.position); st.rotateZ(w * 4 + i); st.scale.setScalar(.8 + .25 * Math.sin(w * 6 + i * 1.3)); });
     whiskerMats.forEach(m => pulse(m, .6 + .4 * g));
     leds.forEach(l => pulse(l.material, .5 + .5 * g));
+    if (call) callFrame(t, w);
     renderer.render(scene, camera);
     ctxs.forEach((x, i) => { const s = mirrors[i].width; x.clearRect(0, 0, s, s); x.save(); x.beginPath(); x.arc(s / 2, s / 2, s / 2, 0, Math.PI * 2); x.clip(); x.drawImage(canvas, 0, 0, s, s); x.restore(); });
   }
