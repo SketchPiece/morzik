@@ -41,7 +41,7 @@ Morzik:  will you pay in the dashboard, or should I remind you tonight?
 
 <img src="webapp/public/morzik-dizzy.png" width="160" align="right" alt="Morzik's head with spiral eyes">
 
-The «Morzik» button left of the message field opens his full-screen app. For now it's a «Coming soon» screen with Morzik's head, eyes spinning from all the plans. Features that outgrow the chat will move here.
+The «Morzik» button left of the message field opens his full-screen app. Tap the green call button to talk to him; the red button ends the call. Calls are available only to the user through Telegram. Morzik starts with his memory and recent chat, and hands tasks to Hermes.
 
 **[morzik.pieces.run](https://morzik.pieces.run)**
 
@@ -69,6 +69,7 @@ design/
   canvas/      design canvases: picking the character, an app instead of a menu, the login screen
   readme/      the banner at the top of this page
 greeter/       jokes for the login screen
+subscriptions/ MCP event polling and durable queue for background processing
 voice/         latency bench for the voice endpoint
 webapp/
   public/      the app page and the head video with a transparent background
