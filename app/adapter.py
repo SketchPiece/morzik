@@ -528,8 +528,8 @@ class MorzikAppAdapter(BasePlatformAdapter):
         source = self.build_source(chat_id=CHAT_ID, chat_name="Morzik App", chat_type="dm", user_id=USER_ID,
                                    message_id=message["id"])
         event = MessageEvent(text=text, message_type=message_type, source=source, message_id=message["id"],
-                             media_urls=media_urls, media_types=media_types, raw_message=message,
-                             metadata={"morzik_app_seq": message["seq"]})
+                             media_urls=media_urls, media_types=media_types, raw_message=message)
+        # No event metadata: Hermes refuses events with metadata it doesn't know (session_envelope).
         mc = _morzik_chat()
         if mc is not None and not text.startswith("/"):
             try:  # the "ща" when he goes off to look something up without a word (morzik-chat)
@@ -542,9 +542,10 @@ class MorzikAppAdapter(BasePlatformAdapter):
         await self.handle_message(event)
 
     async def on_processing_start(self, event: MessageEvent) -> None:
-        seq = (event.metadata or {}).get("morzik_app_seq")
-        if seq:
-            await self._publish(self.store.mark_read_until(int(seq)))
+        """Morzik took the message: it and everything before it turn "read"."""
+        message = self.store.get(str(event.message_id or "")) if self.store else None
+        if message:
+            await self._publish(self.store.mark_read_until(int(message["seq"])))
 
     async def on_processing_complete(self, event, outcome) -> None:
         await self._set_typing(None)
@@ -562,6 +563,8 @@ class MorzikAppAdapter(BasePlatformAdapter):
                 return None
             if not mc._is_morzik(content):
                 line = mc._natural_line(content)
+                if not line and re.search(r"refused|not (?:saved|answered)", content, re.I):
+                    line = "ой, я прослушал. напиши ещё раз?"  # the user is waiting for an answer
                 logger.warning("morzik-app: Hermes said %r -> %s", content[:300], repr(line) if line else "dropped")
                 if line:
                     mc._remember(line)
