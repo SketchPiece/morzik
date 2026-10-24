@@ -1,0 +1,26 @@
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600&display=swap");
+html, body { margin: 0; width: 1280px; height: 800px; overflow: hidden; background: #10162c; }
+body { display: flex; flex-direction: column; font-family: Inter, system-ui, sans-serif; }
+.screen { height: 528px; background: #1f2b52; position: relative; display: flex; align-items: center; justify-content: center; }
+.tty { display: flex; flex-direction: column; align-items: center; gap: 18px; }
+#st { display: block; image-rendering: pixelated; }
+.txt { font-family: "JetBrains Mono", monospace; font-size: 20px; line-height: 26px; text-align: center; }
+.top { color: #ece8df; } .bottom { color: #8f8aa6; min-height: 26px; } .hint { color: #8f8aa6; margin-top: 18px; } .hint b { color: #ffa21f; font-weight: 400; }
+.login { display: none; position: absolute; inset: 0; margin: 0; padding: 28px 32px; background: #000; color: #aaa; font: 20px/26px "JetBrains Mono", monospace; }
+.cur { animation: c 1s steps(1) infinite; } @keyframes c { 50% { opacity: 0; } }
+.strip { flex: 1; display: flex; gap: 40px; padding: 22px 40px; box-sizing: border-box; border-top: 1px solid #2a3561; }
+.kb { display: flex; flex-direction: column; gap: 5px; }
+.row { display: flex; gap: 5px; }
+.row:nth-child(2) { padding-left: 21px; } .row:nth-child(3) { padding-left: 32px; } .row:nth-child(4) { padding-left: 53px; }
+.k { width: 38px; height: 38px; border-radius: 6px; background: #1d2647; border: 1px solid #2d3a6b; box-sizing: border-box; position: relative;
+     color: #b9b4c9; font: 500 14px/1 Inter, sans-serif; display: flex; align-items: center; justify-content: center; transition: background .05s; }
+.k small { position: absolute; right: 4px; bottom: 3px; font-size: 10px; color: #6f7096; }
+.k.enter { width: 76px; } .k.space { width: 255px; margin-left: 87px; } .k.left { margin-left: 21px; }
+.k.on { background: #ffa21f; border-color: #ffc26b; color: #1f2b52; box-shadow: 0 0 14px #ffa21f88; } .k.on small { color: #6a3d00; }
+.side { flex: 1; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.snd { height: 26px; font: 500 14px/26px Inter, sans-serif; color: #59608a; }
+.snd.on { color: #ffb43a; } .snd.on::before { content: "♪ "; }
+.line { margin: 0; min-height: 44px; font: 16px/22px "JetBrains Mono", monospace; color: #ece8df; white-space: pre; }
+.steps { margin: 0; padding: 0 0 0 22px; color: #6f7096; font-size: 15px; line-height: 22px; display: flex; flex-direction: column; gap: 3px; }
+.steps li.on { color: #ece8df; } .steps li.done { color: #9c98b3; }
+.bar { height: 3px; background: #2a3561; border-radius: 2px; margin-top: auto; } .bar i { display: block; height: 100%; width: 0; background: #ffa21f; border-radius: 2px; }
