@@ -134,6 +134,27 @@ class GateTest(unittest.TestCase):
         self.assertEqual(self.post("/login/state", {}, user_id=1)[1]["error"], "telegram_user")
         self.assertEqual(self.post("/login/state", {}, age=gate.INIT_DATA_MAX_AGE + 5)[1]["error"], "telegram")
 
+    def test_morzik_app_token_instead_of_telegram(self):
+        import hashlib
+        import sqlite3
+        db_path = self.dir / "chat.db"
+        db = sqlite3.connect(db_path)
+        db.execute("CREATE TABLE devices (id TEXT, token_hash TEXT, revoked INTEGER)")
+        db.execute("INSERT INTO devices VALUES ('d1', ?, 0)", (hashlib.sha256(b"phone-token").hexdigest(),))
+        db.commit()
+        db.close()
+        gate.Handler.settings["app_db"] = db_path
+        app = {"initData": "morzik-app"}
+        status, state, _ = self.post("/login/state", {**app, "appToken": "phone-token", "request": "abcdefabcdef0123"})
+        self.assertEqual((status, state["request"]["site"]), (200, "Amazon"))
+        self.assertEqual(self.post("/login/state", {**app, "appToken": "guess"})[1]["error"], "app")
+        self.assertEqual(self.post("/login/state", {**app, "appToken": ""})[1]["error"], "app")
+        # The tailnet device check still comes first.
+        self.assertEqual(self.post("/login/state", {**app, "appToken": "phone-token"}, ip="100.2.2.2")[1]["error"], "device")
+        _, enrolled, _ = self.post("/login/enroll", {**app, "appToken": "phone-token", "deviceId": "x"})
+        status, session, _ = self.post("/login/session", {**app, "appToken": "phone-token", "deviceKey": enrolled["deviceKey"]})
+        self.assertEqual(status, 200)
+
     def test_session_needs_a_known_key(self):
         status, reply, _ = self.post("/login/session", {"deviceKey": "guess"})
         self.assertEqual((status, reply["error"]), (401, "device_key"))

@@ -70,6 +70,16 @@ def _bot(method: str, **params):
     return body["result"]
 
 
+def _app():
+    """The Morzik App chat (morzik-app platform plugin), when the gateway runs it."""
+    import sys
+    for module in list(sys.modules.values()):
+        active = getattr(module, "ACTIVE", None)
+        if isinstance(active, list) and active and type(active[0]).__name__ == "MorzikAppAdapter":
+            return active[0]
+    return None
+
+
 def _write(path: pathlib.Path, data: dict) -> None:
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1))
@@ -110,12 +120,22 @@ def _request_login(params, **kwargs):
     path = requests / f"{request_id}.json"
     _write(path, {"id": request_id, "site": site, "url": url, "status": "waiting", "created": time.time()})
     chat_id = os.environ.get("TELEGRAM_HOME_CHANNEL", "")
+    # The button goes to Telegram and to the Morzik App: the user taps it wherever he is.
+    sent, app, app_message, problems = None, _app(), None, []
     try:
         sent = _bot("sendMessage", chat_id=chat_id, text=message, reply_markup={"inline_keyboard": [[{
             "text": f"Войти в {site}", "web_app": {"url": f"{APP_URL}?r={request_id}"}}]]})
     except (OSError, ValueError, RuntimeError) as exc:
+        problems.append(f"telegram: {exc}")
+    if app is not None:
+        try:
+            app_message = app.post_buttons(message, [{"id": "login", "title": f"Войти в {site}", "kind": "login",
+                                                      "value": request_id}])
+        except Exception as exc:
+            problems.append(f"app: {exc}")
+    if sent is None and app_message is None:
         path.unlink(missing_ok=True)
-        return json.dumps({"success": False, "error": f"could not message the user: {exc}"})
+        return json.dumps({"success": False, "error": f"could not message the user: {'; '.join(problems)}"})
     logger.info("morzik-login: asked to log in to %s (%s)", site, request_id)
 
     status, deadline = "waiting", time.monotonic() + WAIT
@@ -141,9 +161,15 @@ def _request_login(params, **kwargs):
         except (OSError, ValueError):
             pass
     try:  # the button has done its job
-        _bot("editMessageReplyMarkup", chat_id=chat_id, message_id=sent["message_id"],
-             reply_markup={"inline_keyboard": []})
+        if sent is not None:
+            _bot("editMessageReplyMarkup", chat_id=chat_id, message_id=sent["message_id"],
+                 reply_markup={"inline_keyboard": []})
     except (OSError, ValueError, RuntimeError, KeyError):
+        pass
+    try:
+        if app is not None and app_message:
+            app.clear_buttons(app_message)
+    except Exception:
         pass
     logger.info("morzik-login: %s -> %s", request_id, status)
     notes = {

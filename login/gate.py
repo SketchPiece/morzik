@@ -8,8 +8,10 @@ Every /login/ call needs all three:
   X-Forwarded-For; the login must be the user's and the device one of MORZIK_LOGIN_DEVICES (`tailscale whois`).
   The gate listens on a Unix socket owned by `morzik`, so other users of the server cannot forge these headers;
 - Telegram: initData signed for Morzik's bot, the user's user id, opened minutes ago;
+  or, from the Morzik App (the iPhone app), appToken: a device token of its chat (~/.hermes/morzik-app/chat.db);
 - Face ID: a device key the gate issued once, kept by Telegram in the phone's biometric storage
-  (BiometricManager) and released only after Face ID. The gate stores its hash.
+  (BiometricManager), or by the Morzik App in the Keychain behind Face ID, and released only after Face ID.
+  The gate stores its hash.
 
 Routes:
 - GET /novnc/core/…, /novnc/vendor/… — the noVNC client modules (public code), with CORS for the app;
@@ -76,6 +78,7 @@ def load_settings() -> dict:
         "vnc_password_file": pathlib.Path(env.get("MORZIK_LOGIN_VNC_PASSWORD_FILE",
                                                   str(pathlib.Path.home() / ".vnc/password.txt"))),
         "novnc": pathlib.Path(env.get("MORZIK_LOGIN_NOVNC", "/usr/share/novnc")),
+        "app_db": pathlib.Path(env.get("MORZIK_APP_DB", str(pathlib.Path.home() / ".hermes/morzik-app/chat.db"))),
     }
     missing = [name for name, key in (("TELEGRAM_BOT_TOKEN", "bot_token"),
                                       ("TELEGRAM_HOME_CHANNEL", "telegram_user_id"),
@@ -105,6 +108,25 @@ def verify_init_data(init_data: str, bot_token: str, max_age: float, now: float 
     except ValueError:
         return None
     return user if isinstance(user, dict) else None
+
+
+def verify_app_token(token: str, db_path: pathlib.Path) -> bool:
+    """A device token of the Morzik App: its chat database keeps only the hashes (same as voice/brain.py)."""
+    import sqlite3
+    if not token or len(token) > 200:
+        return False
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
+    except sqlite3.Error:
+        return False
+    try:
+        digest = hashlib.sha256(token.encode()).hexdigest()
+        row = conn.execute("SELECT token_hash FROM devices WHERE token_hash=? AND revoked=0", (digest,)).fetchone()
+    except sqlite3.Error:
+        return False
+    finally:
+        conn.close()
+    return row is not None and hmac.compare_digest(row[0], digest)
 
 
 def key_hash(key: str) -> str:
@@ -343,6 +365,11 @@ class Handler(BaseHTTPRequestHandler):
             return self.error(400, "json")
         if not isinstance(body, dict):
             return self.error(400, "json")
+        if "appToken" in body:  # the Morzik App
+            if not verify_app_token(str(body.get("appToken") or ""), self.settings.get("app_db", pathlib.Path("/nonexistent"))):
+                log.warning("refused an unknown Morzik App token from %s", device)
+                return self.error(401, "app")
+            return route(body, device)
         max_age = DONE_MAX_AGE if route == self.done else INIT_DATA_MAX_AGE
         user = verify_init_data(str(body.get("initData") or ""), self.settings["bot_token"], max_age)
         if user is None:

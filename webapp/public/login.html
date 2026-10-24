@@ -54,7 +54,8 @@
 // с телефона пользователя), подпись Telegram (initData) и Face ID (ключ устройства, который Telegram отдаёт
 // только после Face ID). Пароль VNC сервер подставляет сам. Подробнее — login/gate.py.
 const GATE = 'https://sketch-server.<tailnet>.ts.net:6080';
-const tg = window.Telegram && Telegram.WebApp;
+// In the Morzik App (iPhone) the app provides the same calls: its token instead of initData, Face ID through the Keychain.
+const tg = window.MorzikApp || (window.Telegram && Telegram.WebApp);
 const bm = tg?.BiometricManager;
 const $ = id => document.getElementById(id);
 const requestId = new URLSearchParams(location.search).get('r') || '';
@@ -77,7 +78,7 @@ async function gate(path, body) {
   let res;
   try {
     res = await fetch(GATE + path, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                      body: JSON.stringify({ initData: tg.initData, ...body }) });
+                                      body: JSON.stringify({ initData: tg.initData, ...(tg.appToken ? { appToken: tg.appToken } : {}), ...body }) });
   } catch {
     throw new Refused('Не достучался до сервера. Включи Tailscale на телефоне и нажми «Ещё раз».');
   }
@@ -86,6 +87,7 @@ async function gate(path, body) {
   const why = {
     device: 'Это устройство не пускаю: нужен твой телефон в Tailscale.',
     telegram: 'Telegram не подтвердил, что это ты. Открой кнопку из чата заново.',
+    app: 'Приложение не подтвердило, что это ты. Войди в него заново.',
     telegram_user: 'Это не твой Морзик.',
     enroll_closed: 'Этот телефон я не знаю, а новый можно добавить, только если открыть окно на сервере: gate.py allow-enroll.',
   }[data.error];
