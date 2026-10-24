@@ -33,16 +33,18 @@
 
 ## Приложение
 
-Кнопка меню в чате («Морзик» слева от поля ввода, `setChatMenuButton` с `web_app`) открывает Mini App: https://morzik.pieces.run/?v=2 (pieces, piece `morzik`, сборка по `webapp/public/Dockerfile`: nginx со своим `nginx.conf` на порту 80). Пока там экран «Скоро»: голова Морзика с глазами-спиральками и подпись. Макет и варианты — `design/canvas/mini-app/` (hosted: https://draftwall.pieces.run/c/mini-app-56e8), выбран «А».
+Кнопка меню в чате («Морзик» слева от поля ввода, `setChatMenuButton` с `web_app`) открывает Mini App: https://morzik.pieces.run/?v=2 (pieces, piece `morzik`, сборка по `webapp/public/Dockerfile`: nginx со своим `nginx.conf` на порту 80). Там экран звонка Морзику. Первый макет («Скоро», голова кругом) — `design/canvas/mini-app/` (hosted: https://draftwall.pieces.run/c/mini-app-56e8); анимация звонка — `design/canvas/call/` (hosted: https://draftwall.pieces.run/c/call-9d15), выбран «Г»: мимика + свет по усам.
 
-- Голова — заранее отрендеренное видео с прозрачным фоном: `morzik-dizzy.mov` (HEVC с альфой, для WebKit: Telegram на iPhone и Mac, Safari) и `morzik-dizzy.webm` (VP9 с альфой, для Chrome и Telegram на Android); страница выбирает по User-Agent, пока грузится — постер `morzik-dizzy.png`.
-- Модель та же (`_cat2.js`), режимы `headOnly`, `dizzy`, `transparent` (и `stars`, не используется). На прозрачном фоне светящиеся детали непрозрачные, иначе усы выпадают из альфы.
+- Голова — живая 3D-модель (с 24.10, до этого видео с альфой): `webapp/public/morzik.js` — копия `design/canvas/morzik-character/_cat2.bundle.js`; поменял `_cat2.js` — пересобери бандл (команда в начале `_three.js`) и скопируй. Режимы `headOnly`, `transparent`, `call` + `callStyle: 'both'`. Живой объект: `set('idle' | 'ringing' | 'listening' | 'thinking' | 'speaking' | 'dizzy')`, `setLevel(T => число или { v, wide })`. На прозрачном фоне светящиеся детали непрозрачные, иначе усы выпадают из альфы.
+- Состояния: до звонка спит (глаза-дужки, усы еле тлеют), гудки, слушает (уши вперёд, голова набок, свет по усам к мордочке), думает (пока работает инструмент `perform_task`: события `agent_tool_request` / `agent_tool_response`, включены в `client_events` агента 24.10), говорит (рот, кивки на ударениях, свет от мордочки). Ошибка — глаза-спиральки и текст. Под именем во время звонка — время звонка.
+- Живость: всё на пружинах, моргания, взгляды и подёргивания ушей в случайные моменты, голова плавает по шуму. Рот — по громкости голоса из SDK (`getOutputVolume`, среднее спектра 100–8000 Гц), пол и пик подстраиваются; форма рта (шире на «и», круглее на «о») — по спектру `getOutputByteFrequencyData`: высокие форманты 1,7–3,5 кГц против низких 250–900 Гц. Пороги подобраны на глаз, без настоящего голоса; калибровать по живому звонку.
+- `morzik-dizzy.png` остался только для README.
 - На телефоне открывается на весь экран (`requestFullscreen`, только iOS и Android). Грабли, на которых это сидело весь день 23.10.2026:
   - стартовый код страницы должен быть внутри функции: глобальные `const` в нём на iPhone роняли скрипт целиком (`"Script error."`, вероятно, совпадение имён с кодом, который встраивает Telegram), и ни полного экрана, ни цвета шапки, ни видео не было;
   - `Cache-Control: no-cache` в `nginx.conf` обязателен: без него WebView Telegram на iPhone держит старую страницу и сервер не спрашивает, новая версия не доходит;
   - `getChatMenuButton` может показывать старый адрес, хотя `setChatMenuButton` уже применился: проверять по логам сервера, куда пришёл телефон;
   - `telegram-web-app.js` лежит рядом со страницей (своя копия), шрифты Google грузятся без блокировки.
-- Пересобрать видео: `NODE_PATH=<папка с puppeteer-core>/node_modules node webapp/render/render.cjs [fps=30]` (Chrome, ffmpeg с `hevc_videotoolbox`, только macOS). Выложить: `upload_code` для piece `morzik` из `webapp/public/`.
+- Выложить: `upload_code` для piece `morzik` из `webapp/public/`.
 
 ## Где работать над проектом
 
