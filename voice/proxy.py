@@ -64,23 +64,28 @@ FROM_ELEVENLABS = (ROUTE, ASK_ROUTE, AFTER_CALL_ROUTE)
 # Said by the agent when Morzik could not do the task.
 ASK_FAILED = "Не удалось выполнить запрос. Коротко сообщи об этом пользователю."
 GREETINGS = (
-    "[mischievously] Мрр, привет. Ну что, соскучился?",
     "Привет. Что у тебя?",
     "[smugly] А вот и ты. Рассказывай.",
     "Привет. Поболтаем или что-то затеял?",
     "[mischievously] Ну, рассказывай, что там у людей.",
     "О, привет. Я весь во внимании.",
+    "Мрр. Слушаю.",
+    "[lazily] Я тут. Что случилось?",
+    "Привет. Чем займёмся?",
+    "[curious] О, звонок. Что-то срочное или просто так?",
+    "Да-да, на связи.",
 )
 _greeting_lock = threading.Lock()
-_last_greeting = None
+# The last few openings; the next one is picked among the rest.
+_recent_greetings = deque(maxlen=len(GREETINGS) // 2)
 
 
 def next_greeting() -> str:
-    """A fresh opening for each call; never repeat the previous one in this process."""
-    global _last_greeting
+    """A fresh opening for each call, not one of the last few said by this process."""
     with _greeting_lock:
-        _last_greeting = random.choice([line for line in GREETINGS if line != _last_greeting])
-        return _last_greeting
+        line = random.choice([line for line in GREETINGS if line not in _recent_greetings])
+        _recent_greetings.append(line)
+        return line
 
 
 MODEL_ALIAS = "morzik-voice"
