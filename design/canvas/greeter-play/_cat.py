@@ -10,7 +10,7 @@ EYE_RX = 2.8     # eye half-width (was 3.6 before the eyes got narrower); the ed
 
 def build(lid=0, look=0, tongue=2, ear=0.0, glow="Y", ear_l=0.0, flat=0.0, look_y=0, pupil=1, mouth=0, happy=False):
     """As pixel.build, plus: ear_l: left ear twitch 0..1; flat: both ears pinned back 0..1;
-    look_y: pupils -1..1 rows; pupil: 1 slit, 2 wider, 3 round; mouth: 0 shut, 1 meow, 2 yawn,
+    look_y: pupils -1..1 rows; pupil: 0 thin slit, 1 narrow oval (default), 2 taller, 3 round; mouth: 0 shut, 1 meow, 2 yawn,
     3 hiss; happy: eyes closed in ^ ^ arcs; tongue 3: licking out, 4: licking to the side."""
     g = [["."] * W for _ in range(H)]
     def inside_ellipse(x, y, cx, cy, rx, ry): return ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1
@@ -69,8 +69,10 @@ def build(lid=0, look=0, tongue=2, ear=0.0, glow="Y", ear_l=0.0, flat=0.0, look_
             g[y][x] = "o" if edge and y >= 17 else "O"
         px, ly = c + look, look_y
         dots = [(px, y) for y in range(14 + ly, 20 + ly)]
-        if pupil >= 2: dots += [(px + s, y) for s in (-1, 1) for y in range(15 + ly, 19 + ly)]
-        if pupil >= 3: dots += [(px + s, y) for s in (-1, 1) for y in (14 + ly, 19 + ly)] + [(px + s, y) for s in (-2, 2) for y in (16 + ly, 17 + ly)]
+        if pupil == "cross": dots += [(px + s, y) for s in (-1, 1) for y in (16 + ly, 17 + ly)]
+        elif pupil >= 1: dots += [(px + s, y) for s in (-1, 1) for y in range(15 + ly, 19 + ly)]
+        if pupil != "cross" and pupil >= 2: dots += [(px + s, y) for s in (-1, 1) for y in (14 + ly, 19 + ly)]
+        if pupil != "cross" and pupil >= 3: dots += [(px + s, y) for s in (-2, 2) for y in (16 + ly, 17 + ly)]
         for x, y in dots:
             if (x, y) in cells: g[y][x] = "K"
         g[13][c - 1] = g[14][c - 1] = "H"

@@ -342,14 +342,11 @@ sketch-server login: <span class="cur">_</span></pre></section>
 
 
 def eyes():
-    """Static board: the eye width now and two narrower ones, the whole head big."""
-    faces = []
-    for rx, label in ((3.6, "Сейчас · 7 пикселей"), (3.1, "Чуть уже · 7 только посередине"), (2.8, "Уже · 5 пикселей (взял этот)")):
-        _cat.EYE_RX = rx
-        faces.append([label, "\n".join(build()[:29])])
-    _cat.EYE_RX = 2.8
+    """Static board: the pupil now and two wider ones, on the narrower eyes, the whole head big."""
+    faces = [[label, "\n".join(build(pupil=p)[:29])]
+             for p, label in ((0, "Было · щель в 1 пиксель"), ("cross", "Шире только посередине"), (1, "Овал (взял этот)"))]
     html = f"""<!doctype html><html><head><meta charset="utf-8"><meta name="board" content="1280x800">
-<title>Глаза поуже: сравнение</title><link rel="stylesheet" href="_shared.css"></head>
+<title>Зрачки пошире: сравнение</title><link rel="stylesheet" href="_shared.css"></head>
 <body class="eyes"><div class="faces" id="faces"></div><script>
 const PAL = {json.dumps(PALETTE)}, FACES = {json.dumps(faces, ensure_ascii=False)}, S = 9;
 FACES.forEach(([label, art]) => {{
