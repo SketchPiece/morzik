@@ -145,6 +145,20 @@ class GateTest(unittest.TestCase):
             "Tailscale-User-Login": "user@example.com", "X-Forwarded-For": "100.1.1.1"})
         self.assertEqual(conn.getresponse().status, 401)
 
+    def test_many_parallel_module_loads(self):
+        (self.dir / "novnc" / "core").mkdir(parents=True)
+        (self.dir / "novnc" / "core" / "m.js").write_text("export default 1;")
+        socks = []
+        for _ in range(60):  # open them all before any is served, like a browser loading modules
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.connect(self.sock)
+            socks.append(sock)
+        for sock in socks:
+            sock.sendall(b"GET /novnc/core/m.js HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+        for sock in socks:
+            self.assertTrue(sock.makefile("rb").readline().startswith(b"HTTP/1.1 200"))
+            sock.close()
+
     def test_novnc_files_only(self):
         (self.dir / "novnc" / "core").mkdir(parents=True)
         (self.dir / "novnc" / "core" / "rfb.js").write_text("export default 1;")
