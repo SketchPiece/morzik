@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
-export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [], manual = false, shiftY = 0, tailSide = 1, twitchEar = 1, paws = 'none', headOnly = false, dizzy = false, transparent = false, stars = false, zoom = 1, cross = 1, call = null, callStyle = 'cat', level = null, onFrame = null } = {}) {
+export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [], manual = false, shiftY = 0, tailSide = 1, twitchEar = 1, paws = 'none', headOnly = false, dizzy = false, transparent = false, stars = false, zoom = 1, cross = 1, call = null, callStyle = 'cat', level = null, onFrame = null, soul = {} } = {}) {
   // headOnly — только голова крупным планом (без тела, лапок и хвоста); dizzy — глаза-спиральки крутятся,
   // голова покачивается по кругу; stars — над головой кружат янтарные звёздочки; transparent — без фона.
   // call — состояние звонка вместо надписи: 'idle' (до звонка), 'ringing', 'listening', 'thinking', 'speaking'.
@@ -12,6 +12,8 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
   // 'waves' — кольцами вокруг головы (их рисует страница в onFrame(t, level), модель только жива). Рот говорит во всех.
   // level(T) — голос: число 0…1 или { v, wide } (wide 0…1: «о» → «и»); в звонке из анализатора звука, без неё — фразы-макеты.
   // T — время с начала в секундах, не зацикленное: в звонке анимация не повторяется.
+  // soul — живость глаз в звонке: focus (смотрит на тебя: зрачки сведены, глаза ведут голову, моргает на переводе взгляда),
+  // lids (веки: обрезают радужку сверху и снизу, расслабленный взгляд, улыбка глазами, прищур), iris (радужка с волокнами и ободком).
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true, alpha: transparent });
   renderer.setPixelRatio(2); renderer.setSize(size, size, false);
   renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
@@ -117,7 +119,35 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
   const tongueY = -.36;
 
   // Глаза: миндалевидная радужка с градиентом, ровная щёлка, блики.
-  const irisTex = radialTex([[0, '#FFE6A0'], [.45, '#FFBE45'], [.85, '#EA8A1C'], [1, '#8E430E']]);
+  const irisTex = soul.iris ? tex(256, 256, (x, w) => {
+    // Живая радузка: тёплый градиент, светлый венчик у зрачка, волокна лучами, тёмный ободок по краю.
+    const c = w / 2, g = x.createRadialGradient(c, c, 0, c, c, c);
+    [[0, '#FFF0B8'], [.3, '#FFD060'], [.6, '#F5A230'], [.86, '#D9741A'], [.93, '#7A3608'], [1, '#3A1804']].forEach(([o, col]) => g.addColorStop(o, col));
+    x.fillStyle = g; x.fillRect(0, 0, w, w);
+    let r = 5; const rnd = () => (r = (r * 16807) % 2147483647) / 2147483647;
+    for (let i = 0; i < 220; i++) {
+      const a = rnd() * Math.PI * 2, r0 = c * (.2 + rnd() * .15), r1 = c * (.6 + rnd() * .3);
+      x.strokeStyle = rnd() < .5 ? `rgba(255,240,190,${.12 + rnd() * .2})` : `rgba(140,60,10,${.1 + rnd() * .2})`; x.lineWidth = 1 + rnd() * 1.5;
+      x.beginPath(); x.moveTo(c + r0 * Math.cos(a), c + r0 * Math.sin(a)); x.lineTo(c + r1 * Math.cos(a + (rnd() - .5) * .08), c + r1 * Math.sin(a + (rnd() - .5) * .08)); x.stroke();
+    }
+    const ring = x.createRadialGradient(c, c, c * .2, c, c, c * .42); ring.addColorStop(0, 'rgba(255,250,220,.55)'); ring.addColorStop(1, 'rgba(255,250,220,0)');
+    x.fillStyle = ring; x.fillRect(0, 0, w, w);
+    // Тень от верхнего века: верх радужки темнее.
+    const top = x.createLinearGradient(0, 0, 0, w * .45); top.addColorStop(0, 'rgba(60,20,0,.55)'); top.addColorStop(1, 'rgba(60,20,0,0)');
+    x.fillStyle = top; x.fillRect(0, 0, w, w);
+  }) : radialTex([[0, '#FFE6A0'], [.45, '#FFBE45'], [.85, '#EA8A1C'], [1, '#8E430E']]);
+  // Веки (soul.lids): радужку, зрачок и блики шейдер обрезает по двум дугам в координатах глаза; у края — тёмная кромка.
+  const lidShader = u => m => m.onBeforeCompile = sh => {
+    Object.assign(sh.uniforms, u);
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform mat4 uLidInv; varying vec2 vLid;')
+      .replace('#include <project_vertex>', '#include <project_vertex>\nvLid = (uLidInv * modelMatrix * vec4(transformed, 1.)).xy;');
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nuniform vec4 uLids; varying vec2 vLid;')
+      .replace('#include <dithering_fragment>', `#include <dithering_fragment>
+        float up = uLids.x - uLids.y * vLid.x * vLid.x, lo = uLids.z - uLids.w * vLid.x * vLid.x;
+        if (vLid.y > up || vLid.y < lo) discard;
+        float edge = min(up - vLid.y, vLid.y - lo);
+        gl_FragColor.rgb *= mix(.25, 1., smoothstep(0., .022, edge));`);
+  };
   // Глаза-спиральки (dizzy): янтарная радужка с тёмной спиралью из двух витков, крутится вокруг центра.
   const spiralTex = tex(256, 256, (x, w) => {
     const g = x.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2); [[0, '#FFE6A0'], [.5, '#FFBE45'], [.9, '#EA8A1C'], [1, '#8E430E']].forEach(([o, c]) => g.addColorStop(o, c));
@@ -130,11 +160,15 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     const x = sx * .4, y = .1, z = surf(x, y) + .035;
     const g = new THREE.Group(); g.position.set(x, y, z); g.lookAt(x + sx * .3, y + .06, z + 1); head.add(g);
     const lid = new THREE.Group(); g.add(lid);
+    const lu = { uLidInv: { value: new THREE.Matrix4() }, uLids: { value: new THREE.Vector4(1, 0, -1, 0) } }, clip = soul.lids ? lidShader(lu) : () => {};
     const iris = new THREE.Mesh(new THREE.CircleGeometry(1, 64), new THREE.MeshBasicMaterial({ map: irisTex, toneMapped: false })); iris.scale.set(.2, .235, 1); lid.add(iris);
     const pupil = new THREE.Mesh(new THREE.CircleGeometry(1, 48), new THREE.MeshBasicMaterial({ color: 0x07060b })); pupil.scale.set(.04, .175, 1); pupil.position.z = .004; lid.add(pupil);
-    const hi = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    clip(iris.material); clip(pupil.material);
+    const hi = new THREE.MeshBasicMaterial({ color: 0xffffff }); clip(hi);
     const h1 = new THREE.Mesh(new THREE.CircleGeometry(.05, 24), hi); h1.position.set(.07, .09, .008); lid.add(h1);
     const h2 = new THREE.Mesh(new THREE.CircleGeometry(.022, 16), hi); h2.position.set(-.06, -.1, .008); lid.add(h2);
+    // Живая радужка: блик крупнее.
+    if (soul.iris) h1.scale.setScalar(1.25);
     const halo = sprite('rgba(255,170,50,.45)', .62, .7, V(0, 0, -.01), g);
     // Свечение — плоская картинка, а морда выпуклая: с проверкой глубины середину съедала голова (видно при закрытых глазах).
     halo.material.depthTest = false; halo.renderOrder = 1;
@@ -150,7 +184,7 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     // Глаз рисуется после свечения (оно без проверки глубины), иначе свечение ложится на зрачок.
     spiral.transparent = true;
     [...lid.children, shut, joy].forEach(o => { o.renderOrder = 2; o.material.transparent = true; });
-    return { lid, pupil, halo, sx, iris, shut, joy, amber, spiral };
+    return { lid, pupil, halo, sx, iris, shut, joy, amber, spiral, lu };
   });
 
   // Усы-морзянка как у первого чёрного кота: по три с каждой стороны, каждый целиком из точек и тире «·–··–».
@@ -311,11 +345,13 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     if (dt != null) {
       if (T > ev.blink) { ev.blinkAt = T; ev.dbl = rand(0, 1) < .15; ev.blink = T + rand(2, call === 'thinking' ? 3.5 : 6); }
       if (T > ev.saccade) {
-        const th = call === 'thinking', sp = call === 'speaking';
+        const th = call === 'thinking', sp = call === 'speaking', gx0 = ev.gx, gy0 = ev.gy;
         ev.gx = (th ? .04 : 0) + rand(-1, 1) * (th ? .025 : sp ? .026 : .012); ev.gy = (th ? .055 : 0) + rand(-1, 1) * (th ? .015 : sp ? .016 : .008);
         // Говоря, иногда отводит взгляд вбок-вверх, как будто подбирает слово, и возвращается.
         if (sp && rand(0, 1) < .25) { ev.gx = rand(0, 1) < .5 ? -.05 : .05; ev.gy = rand(.015, .035); }
         ev.saccade = T + (sp ? rand(.35, 1.4) : rand(.6, th ? 1.4 : 2.5));
+        // soul.focus: на большом переводе взгляда часто моргает, как живые.
+        if (soul.focus && Math.hypot(ev.gx - gx0, ev.gy - gy0) > .025 && rand(0, 1) < .5 && T - ev.blinkAt > .8) { ev.blinkAt = T; ev.dbl = false; }
       }
       // Говоря и слушая, раз в 1–3 с чуть меняет позу: наклон, поворот, кивок вверх-вниз.
       if (T > ev.pose) { const a = call === 'speaking' ? 1 : call === 'listening' ? .45 : 0;
@@ -352,17 +388,35 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     if (en === 'purr') Object.assign(P, { hz: P.hz + .08 * ek * Math.sin(T * 1.6), earF: P.earF - .2 * ek });
     if (en === 'meow') Object.assign(P, { earF: P.earF + .6 * ek, hz: P.hz + .09 * ek, hx: P.hx - .03 * ek });
     if (en === 'ask') Object.assign(P, { hz: P.hz + .12 * ek, hy: P.hy + .04 * ek, earF: P.earF + .6 * ek });
+    // soul.focus: глаза ведут, голова догоняет взгляд; soul.iris: зрачок чуть «дышит».
+    if (soul.focus && !idle) { P.hy += ev.gx * 1.1; P.hx -= ev.gy * .9; }
+    if (soul.iris) P.dil += .05 * noise(T, .9, 1.7, 4);
     const hx = spring(dt, 'hx', P.hx, 1.4, .5), hy = spring(dt, 'hy', P.hy, 1.2, .55), hz = spring(dt, 'hz', P.hz, 1.3, .5), hp = spring(dt, 'hp', P.hp, 2, .5);
     const px = spring(dt, 'px', P.px, 7, .85), py = spring(dt, 'py', P.py, 7, .85), dil = spring(dt, 'dil', P.dil, 1, 1);
     const earF = spring(dt, 'earF', P.earF, 2.5, .4), earT = spring(dt, 'earT', P.earT, 4, .4);
     head.rotation.set(hx, hy, hz); head.position.y = .3 + hp;
     cat.rotation.y = 0;
+    // soul.lids: верхнее и нижнее веко (в координатах глаза, радужка ±0,2 × ±0,235). Расслабленный взгляд — верхнее
+    // чуть прикрыто; говорит — нижнее приподнято (улыбка глазами); думает — прищур; хитрит — тяжёлые веки; восторг — распахнуты.
+    let lu = .17, ll = -.3;
+    if (call === 'listening') lu = .2;
+    if (call === 'speaking') { lu = .165; ll = -.2; }
+    if (call === 'thinking') lu = .12;
+    if (call === 'ringing') lu = .3;
+    if (en === 'smug') { lu += (.04 - lu) * ek; ll += (-.17 - ll) * ek; }
+    if (en === 'excited') { lu += (.3 - lu) * ek; ll += (-.3 - ll) * ek; }
+    if (en === 'ask' || en === 'meow') lu += (.24 - lu) * ek;
+    lu = spring(dt, 'lidU', lu + .7 * py, 3, .8); ll = spring(dt, 'lidL', ll + .5 * py, 3, .8);
+    const tremor = soul.focus ? .0025 : 0;
     eyes.forEach(E => {
+      if (soul.lids) { E.lid.updateWorldMatrix(true, false); E.lu.uLidInv.value.copy(E.lid.matrixWorld).invert(); E.lu.uLids.value.set(lu, 2.2, ll, 2.8); }
       // Смех — глаза-дужки «∩», мурлычет — закрытые «‿», хитрит — полуприкрытые.
       const joy = en === 'laugh' && ek > .45, purr = en === 'purr' && ek > .45;
       E.lid.visible = !idle && !joy && !purr; E.shut.visible = idle || purr; E.joy.visible = joy; E.halo.material.opacity = idle ? .25 : E.halo.material.opacity;
       const lidK = en === 'laugh' || en === 'purr' ? 1 - .94 * Math.min(1, ek * 2.2) : en === 'smug' ? 1 - .45 * ek : 1;
-      E.lid.scale.y = Math.max(.06, (en === 'excited' ? 1 : open) * lidK); E.pupil.position.set(px, py, .004);
+      E.lid.scale.y = Math.max(.06, (en === 'excited' ? 1 : open) * lidK);
+      // soul.focus: зрачки чуть сведены к носу — взгляд сходится на тебе, а не уходит в бесконечность; мелкая дрожь.
+      E.pupil.position.set(px + (soul.focus ? -E.sx * .014 : 0) + tremor * Math.sin(T * 37 + E.sx), py + tremor * Math.sin(T * 29 + 1), .004);
       E.pupil.scale.set(.04 * dil, .175 - .02 * (dil - 1), 1);
     });
     // Уши запаздывают за головой (качнулась голова — уши догоняют) и иногда дёргаются сами.
@@ -421,7 +475,7 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     cat.rotation.y = .12 * Math.sin(w);
     eyes.forEach(E => { E.iris.material = dizzy ? E.spiral : E.amber; E.pupil.visible = !dizzy; if (!dizzy) E.iris.rotation.z = 0;
       if (!call) { E.lid.visible = true; E.shut.visible = E.joy.visible = false; } });
-    if (!call) mouthIn.visible = mouthTongue.visible = false;
+    if (!call) { mouthIn.visible = mouthTongue.visible = false; eyes.forEach(E => E.lu.uLids.value.set(1, 0, -1, 0)); }
     if (dizzy) {
       // Цикл CALM = 8 с: спиральки делают целое число оборотов в разные стороны, голова плывёт по кругу.
       eyes.forEach(E => { E.iris.rotation.z = -E.sx * w * 6; E.lid.scale.y = 1; });
