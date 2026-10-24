@@ -1,0 +1,776 @@
+"""Morzik App: the user's own chat with Morzik, a Hermes platform next to Telegram.
+
+The phone app talks to this adapter over HTTPS (Tailscale Funnel → 127.0.0.1:8660, path /app/):
+
+    POST /app/v1/pair/start   {name}                 a sign-in code goes to the user's Telegram
+    POST /app/v1/pair/finish  {pairing_id, code}     -> {token, device_id}
+    GET  /app/v1/sync?since=REV                      changes after REV (0: the latest messages)
+    GET  /app/v1/history?before=SEQ                  older messages
+    POST /app/v1/messages     {client_id, text, media_id?}   idempotent by client_id
+    POST /app/v1/media        raw body               upload a photo / voice note / file -> {media}
+    GET  /app/v1/media/ID                            download
+    POST /app/v1/push         {token, env}           APNs token of this phone
+    POST /app/v1/read         {seq}                  read up to here (badge)
+    POST /app/v1/action       {message_id, button_id}  tap on a reply button
+    GET  /app/v1/ws?since=REV                        live: missed changes first, then new ones, typing
+
+Everything but pairing needs ``Authorization: Bearer <device token>``. See store.py for how sync works.
+
+Morzik behaves here as in Telegram (morzik-chat): a short reply goes out as several messages, "typing…"
+shows only right before each one, Hermes's own notices never reach the chat, a short "ща" goes out when he
+goes off to look something up silently. When no phone is connected, each message from Morzik is pushed.
+"""
+
+import asyncio
+import json
+import logging
+import mimetypes
+import os
+import random
+import re
+import shutil
+import secrets
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any, Optional
+
+from gateway.config import Platform, PlatformConfig
+from gateway.platforms.base import BasePlatformAdapter, SendResult
+from gateway.platforms.event import MessageEvent, MessageType
+from gateway.platforms._shared import get_scoped_secret
+
+try:
+    from .store import Store
+    from .apns import Apns
+except ImportError:  # loaded as a top-level module
+    from store import Store  # type: ignore
+    from apns import Apns  # type: ignore
+
+logger = logging.getLogger(__name__)
+
+PLATFORM = "morzik_app"
+CHAT_ID = "app"
+USER_ID = "owner"
+API = "/app/v1"
+MAX_MESSAGE_LENGTH = 16000
+MAX_UPLOAD = 25 * 1024 * 1024
+LIVE_FOR = 45.0  # a phone that said nothing for this long is treated as gone (pushes resume)
+TYPING_CHARS_PER_SECOND, MIN_PAUSE, MAX_PAUSE = 25, 1.2, 4.0
+
+# The adapter that is running, for other plugins (morzik-login posts its button here too).
+ACTIVE: list = [None]
+
+
+def _env(name: str, default: str = "") -> str:
+    return (get_scoped_secret(name, default) or default).strip()
+
+
+def _morzik_chat():
+    """Morzik's Telegram manners plugin, if loaded: its splitter and "is this Morzik talking" filter."""
+    for module in list(sys.modules.values()):
+        if all(hasattr(module, a) for a in ("_split_parts", "_is_morzik", "_natural_line", "_turn", "_remember")):
+            return module
+    return None
+
+
+def _voice_in_progress() -> bool:
+    for module in list(sys.modules.values()):
+        fn = getattr(module, "_voice_in_progress", None)
+        if callable(fn) and getattr(module, "TTS_TOOL", None) == "text_to_speech":
+            try:
+                return bool(fn())
+            except Exception:
+                return False
+    return False
+
+
+def _kind_for(mime: str, name: str = "") -> str:
+    mime = (mime or mimetypes.guess_type(name)[0] or "").lower()
+    if mime.startswith("image/"):
+        return "image"
+    if mime.startswith("video/"):
+        return "video"
+    if mime.startswith("audio/"):
+        return "audio"
+    return "file"
+
+
+class MorzikAppAdapter(BasePlatformAdapter):
+    MAX_MESSAGE_LENGTH = MAX_MESSAGE_LENGTH
+    supports_code_blocks = True
+
+    def __init__(self, config: PlatformConfig):
+        super().__init__(config=config, platform=Platform(PLATFORM))
+        extra = config.extra or {}
+        home = Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes")
+        self.state_dir = Path(extra.get("state_dir") or _env("MORZIK_APP_STATE") or home / "morzik-app")
+        self.media_dir = self.state_dir / "media"
+        self.host = extra.get("host") or _env("MORZIK_APP_HOST", "127.0.0.1")
+        self.port = int(extra.get("port") or _env("MORZIK_APP_PORT", "8660"))
+        self.store: Optional[Store] = None
+        self.apns = Apns(_env("MORZIK_APP_APNS_KEY"), _env("MORZIK_APP_APNS_KEY_ID"), _env("MORZIK_APP_APNS_TEAM_ID"),
+                         _env("MORZIK_APP_APNS_TOPIC", "dev.sketchpiece.morzik"))
+        self.bot_token = _env("TELEGRAM_BOT_TOKEN")
+        self.owner_chat = _env("TELEGRAM_HOME_CHANNEL")
+        self._sockets: dict = {}  # ws -> {"device": id, "seen": monotonic}
+        self._runner = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._send_lock = asyncio.Lock()
+        self._typing_state: Optional[str] = None
+
+    # --- lifecycle ---------------------------------------------------------------------------
+
+    async def connect(self, *, is_reconnect: bool = False) -> bool:
+        from aiohttp import web
+        try:
+            self.media_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            self.store = Store(str(self.state_dir / "chat.db"))
+            app = web.Application(client_max_size=MAX_UPLOAD + 1024)
+            r = app.router
+            r.add_post(f"{API}/pair/start", self._pair_start)
+            r.add_post(f"{API}/pair/finish", self._pair_finish)
+            r.add_get(f"{API}/sync", self._sync)
+            r.add_get(f"{API}/history", self._history)
+            r.add_post(f"{API}/messages", self._post_message)
+            r.add_post(f"{API}/media", self._upload)
+            r.add_get(f"{API}/media/{{media_id}}", self._download)
+            r.add_post(f"{API}/push", self._push_token)
+            r.add_post(f"{API}/read", self._read)
+            r.add_post(f"{API}/action", self._action)
+            r.add_get(f"{API}/ws", self._ws)
+            r.add_get(f"{API}/health", lambda request: web.json_response({"ok": True}))
+            self._runner = web.AppRunner(app, access_log=None)
+            await self._runner.setup()
+            await web.TCPSite(self._runner, self.host, self.port).start()
+        except Exception as exc:
+            logger.error("[%s] could not start on %s:%s: %s", self.name, self.host, self.port, exc)
+            return False
+        self._loop = asyncio.get_running_loop()
+        self._running = True
+        self._mark_connected()
+        ACTIVE[0] = self
+        self._wire_plugin_handlers(None)
+        logger.info("[%s] listening on %s:%s (push %s)", self.name, self.host, self.port,
+                    "on" if self.apns.configured else "off")
+        return True
+
+    async def disconnect(self) -> None:
+        self._running = False
+        if ACTIVE[0] is self:
+            ACTIVE[0] = None
+        for ws in list(self._sockets):
+            try:
+                await ws.close()
+            except Exception:
+                pass
+        self._sockets.clear()
+        if self._runner is not None:
+            await self._runner.cleanup()
+            self._runner = None
+        if self.store is not None:
+            self.store.close()
+            self.store = None
+        self._mark_disconnected()
+
+    # --- auth and helpers ------------------------------------------------------------------------
+
+    def _device(self, request) -> Optional[dict]:
+        auth = request.headers.get("Authorization", "")
+        token = auth[7:].strip() if auth.startswith("Bearer ") else request.query.get("token", "")
+        device = self.store.device_for(token) if self.store else None
+        if device:
+            self.store.touch(device["id"])
+        return device
+
+    @staticmethod
+    def _json(data, status: int = 200):
+        from aiohttp import web
+        return web.json_response(data, status=status, dumps=lambda d: json.dumps(d, ensure_ascii=False))
+
+    def _error(self, status: int, code: str):
+        return self._json({"error": code}, status)
+
+    async def _body(self, request) -> dict:
+        try:
+            body = await request.json()
+        except Exception:
+            return {}
+        return body if isinstance(body, dict) else {}
+
+    def _live_devices(self) -> set:
+        now = time.monotonic()
+        return {info["device"] for ws, info in self._sockets.items() if not ws.closed and now - info["seen"] < LIVE_FOR}
+
+    async def _broadcast(self, event: dict) -> None:
+        data = json.dumps(event, ensure_ascii=False)
+        for ws in list(self._sockets):
+            if ws.closed:
+                self._sockets.pop(ws, None)
+                continue
+            try:
+                await ws.send_str(data)
+            except Exception:
+                self._sockets.pop(ws, None)
+
+    async def _publish(self, messages: list, push: bool = False) -> None:
+        messages = [m for m in messages if m]
+        if not messages:
+            return
+        await self._broadcast({"type": "messages", "messages": messages, "rev": self.store.current_rev()})
+        if push:
+            for m in messages:
+                if m["role"] == "morzik" and not m["deleted"]:
+                    asyncio.ensure_future(self._push(m))
+
+    def publish_threadsafe(self, messages: list, push: bool = False) -> None:
+        if self._loop is not None and self._loop.is_running():
+            asyncio.run_coroutine_threadsafe(self._publish(messages, push), self._loop)
+
+    async def _set_typing(self, state: Optional[str]) -> None:
+        if state != self._typing_state:
+            self._typing_state = state
+            await self._broadcast({"type": "typing", "state": state})
+
+    # --- push -------------------------------------------------------------------------------------
+
+    @staticmethod
+    def _preview(message: dict) -> str:
+        text = " ".join((message.get("text") or "").split())
+        media = message.get("media") or {}
+        kind = media.get("kind")
+        label = {"voice": "🎤 Голосовое сообщение", "audio": "🎵 Аудио", "image": "📷 Фото", "video": "🎬 Видео",
+                 "file": f"📎 {media.get('name') or 'Файл'}"}.get(kind, "")
+        if label and text:
+            text = f"{label}: {text}"
+        text = text or label or "…"
+        return text if len(text) <= 240 else text[:239] + "…"
+
+    async def _push(self, message: dict) -> None:
+        if not self.apns.configured:
+            return
+        live = self._live_devices()
+        for device in self.store.push_devices():
+            if device["id"] in live:
+                continue
+            payload = {"aps": {"alert": {"title": "Морзик", "body": self._preview(message)}, "sound": "default",
+                               "badge": self.store.unread(device["id"]), "thread-id": "morzik", "mutable-content": 1},
+                       "seq": message["seq"], "rev": message["rev"]}
+            try:
+                ok, env, reason = await self.apns.send(device["apns_token"], device["apns_env"] or "development", payload)
+            except Exception as exc:
+                logger.warning("[%s] push failed: %s", self.name, exc)
+                continue
+            if ok and env != device["apns_env"]:
+                self.store.set_push(device["id"], device["apns_token"], env)
+            elif reason in ("BadDeviceToken", "Unregistered", "DeviceTokenNotForTopic"):
+                self.store.drop_push(device["apns_token"])
+
+    # --- HTTP: pairing ------------------------------------------------------------------------------
+
+    async def _telegram(self, method: str, **params) -> dict:
+        import httpx
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.post(f"https://api.telegram.org/bot{self.bot_token}/{method}", json=params)
+        body = resp.json()
+        if not body.get("ok"):
+            raise RuntimeError(body.get("description", "telegram error"))
+        return body["result"]
+
+    async def _pair_start(self, request):
+        body = await self._body(request)
+        if not (self.bot_token and self.owner_chat):
+            return self._error(503, "no_telegram")
+        made = self.store.new_code(str(body.get("name") or "iPhone"))
+        if made is None:
+            return self._error(429, "too_often")
+        pairing_id, code = made
+        try:
+            await self._telegram(
+                "sendMessage", chat_id=self.owner_chat, parse_mode="HTML",
+                text=(f"Код для входа в приложение Морзика: <code>{code}</code>\n"
+                      f"Устройство: {(body.get('name') or 'iPhone')[:60]}. Если это не ты, просто ничего не делай."))
+        except Exception as exc:
+            logger.warning("[%s] could not send the sign-in code: %s", self.name, exc)
+            return self._error(502, "telegram_failed")
+        logger.info("[%s] sign-in code sent for %s", self.name, pairing_id)
+        return self._json({"pairing_id": pairing_id})
+
+    async def _pair_finish(self, request):
+        body = await self._body(request)
+        result = self.store.redeem(str(body.get("pairing_id") or ""), str(body.get("code") or ""))
+        if isinstance(result, str):
+            return self._error(403 if result != "expired" else 410, result)
+        device_id, token = result
+        logger.warning("[%s] new device signed in: %s", self.name, device_id)
+        return self._json({"device_id": device_id, "token": token, "rev": self.store.current_rev()})
+
+    # --- HTTP: chat -------------------------------------------------------------------------------
+
+    def _changes(self, since: int) -> dict:
+        current = self.store.current_rev()
+        if since <= 0 or since > current:
+            # First open, or the server's chat is not the one the phone remembers: start from the latest.
+            return {"reset": since > 0, "messages": self.store.tail(), "rev": current, "more": False}
+        messages, more = self.store.since(since)
+        return {"reset": False, "messages": messages, "rev": messages[-1]["rev"] if more else current, "more": more}
+
+    async def _sync(self, request):
+        device = self._device(request)
+        if not device:
+            return self._error(401, "unauthorized")
+        try:
+            since = int(request.query.get("since", "0"))
+        except ValueError:
+            return self._error(400, "bad_since")
+        data = self._changes(since)
+        data["typing"] = self._typing_state
+        return self._json(data)
+
+    async def _history(self, request):
+        if not self._device(request):
+            return self._error(401, "unauthorized")
+        try:
+            before = int(request.query.get("before", "0"))
+            limit = max(1, min(200, int(request.query.get("limit", "60"))))
+        except ValueError:
+            return self._error(400, "bad_before")
+        return self._json({"messages": self.store.before(before, limit)})
+
+    async def _post_message(self, request):
+        device = self._device(request)
+        if not device:
+            return self._error(401, "unauthorized")
+        body = await self._body(request)
+        client_id = str(body.get("client_id") or "").strip()[:64]
+        text = str(body.get("text") or "").strip()
+        media_id = str(body.get("media_id") or "").strip()
+        if not client_id or (not text and not media_id):
+            return self._error(400, "empty")
+        if len(text) > MAX_MESSAGE_LENGTH:
+            return self._error(413, "too_long")
+        media = self._media_info(media_id) if media_id else None
+        if media_id and media is None:
+            return self._error(404, "no_media")
+        if media and body.get("duration"):
+            try:
+                media["duration"] = float(body["duration"])
+            except (TypeError, ValueError):
+                pass
+        message, created = self.store.add("user", text, client_id=client_id, media=media)
+        if created:
+            await self._publish([message])
+            asyncio.ensure_future(self._dispatch(message))
+        return self._json({"message": message, "rev": self.store.current_rev()})
+
+    def _media_info(self, media_id: str) -> Optional[dict]:
+        if not media_id or "/" in media_id or media_id.startswith("."):
+            return None
+        meta = self.media_dir / f"{media_id}.json"
+        try:
+            return json.loads(meta.read_text())
+        except (OSError, ValueError):
+            return None
+
+    def _save_media(self, data: bytes, mime: str, name: str, kind: Optional[str] = None, **extra) -> dict:
+        media_id = secrets.token_hex(10)
+        ext = Path(name).suffix.lower() or mimetypes.guess_extension(mime or "") or ""
+        path = self.media_dir / f"{media_id}{ext}"
+        path.write_bytes(data)
+        os.chmod(path, 0o600)
+        info = {"id": media_id, "kind": kind or _kind_for(mime, name), "mime": mime or mimetypes.guess_type(name)[0] or
+                "application/octet-stream", "name": name or path.name, "size": len(data), "file": path.name}
+        info.update({k: v for k, v in extra.items() if v is not None})
+        (self.media_dir / f"{media_id}.json").write_text(json.dumps(info, ensure_ascii=False))
+        return info
+
+    async def _upload(self, request):
+        if not self._device(request):
+            return self._error(401, "unauthorized")
+        data = await request.read()
+        if not data:
+            return self._error(400, "empty")
+        if len(data) > MAX_UPLOAD:
+            return self._error(413, "too_large")
+        mime = request.headers.get("Content-Type", "application/octet-stream").split(";")[0].strip()
+        name = os.path.basename(request.headers.get("X-Filename", "")) or "file"
+        kind = request.headers.get("X-Media-Kind") or None
+        if kind not in (None, "image", "voice", "audio", "video", "file"):
+            kind = None
+        info = await asyncio.to_thread(self._save_media, data, mime, name, kind)
+        return self._json({"media": info})
+
+    async def _download(self, request):
+        from aiohttp import web
+        if not self._device(request):
+            return self._error(401, "unauthorized")
+        info = self._media_info(request.match_info["media_id"])
+        if info is None:
+            return self._error(404, "not_found")
+        path = self.media_dir / info["file"]
+        if not path.exists():
+            return self._error(404, "not_found")
+        return web.FileResponse(path, headers={"Content-Type": info["mime"], "Cache-Control": "private, max-age=31536000, immutable"})
+
+    async def _push_token(self, request):
+        device = self._device(request)
+        if not device:
+            return self._error(401, "unauthorized")
+        body = await self._body(request)
+        token = str(body.get("token") or "").strip()
+        env = "production" if body.get("env") == "production" else "development"
+        if not token or len(token) > 200:
+            return self._error(400, "bad_token")
+        self.store.set_push(device["id"], token, env)
+        return self._json({"ok": True})
+
+    async def _read(self, request):
+        device = self._device(request)
+        if not device:
+            return self._error(401, "unauthorized")
+        body = await self._body(request)
+        try:
+            self.store.set_read(device["id"], int(body.get("seq") or 0))
+        except (TypeError, ValueError):
+            return self._error(400, "bad_seq")
+        return self._json({"ok": True, "unread": self.store.unread(device["id"])})
+
+    async def _action(self, request):
+        """A tap on a 'reply' button: its text goes to Morzik as the user's message."""
+        device = self._device(request)
+        if not device:
+            return self._error(401, "unauthorized")
+        body = await self._body(request)
+        message = self.store.get(str(body.get("message_id") or ""))
+        button = next((b for b in (message or {}).get("buttons", []) if b.get("id") == body.get("button_id")), None)
+        if button is None or button.get("kind") != "reply":
+            return self._error(404, "no_button")
+        changed = self.store.update(message["id"], buttons=[])
+        reply, created = self.store.add("user", str(button.get("value") or button.get("title")),
+                                        client_id=f"btn-{message['id']}-{button['id']}")
+        await self._publish([changed, reply])
+        if created:
+            asyncio.ensure_future(self._dispatch(reply))
+        return self._json({"message": reply})
+
+    async def _ws(self, request):
+        from aiohttp import web, WSMsgType
+        device = self._device(request)
+        if not device:
+            return self._error(401, "unauthorized")
+        ws = web.WebSocketResponse(heartbeat=20, max_msg_size=1 << 20)
+        await ws.prepare(request)
+        # Registered before the backlog is read: nothing stored meanwhile can slip between the two.
+        self._sockets[ws] = {"device": device["id"], "seen": time.monotonic()}
+        try:
+            since = int(request.query.get("since", "0"))
+        except ValueError:
+            since = 0
+        try:
+            while True:
+                data = self._changes(since)
+                await ws.send_str(json.dumps({"type": "messages", **data}, ensure_ascii=False))
+                if not data.get("more"):
+                    break
+                since = data["rev"]
+            await ws.send_str(json.dumps({"type": "typing", "state": self._typing_state}))
+            async for msg in ws:
+                if msg.type != WSMsgType.TEXT:
+                    if msg.type in (WSMsgType.ERROR, WSMsgType.CLOSE):
+                        break
+                    continue
+                if ws in self._sockets:
+                    self._sockets[ws]["seen"] = time.monotonic()
+                try:
+                    event = json.loads(msg.data)
+                except ValueError:
+                    continue
+                if event.get("type") == "ping":
+                    await ws.send_str('{"type":"pong"}')
+                elif event.get("type") == "read":
+                    try:
+                        self.store.set_read(device["id"], int(event.get("seq") or 0))
+                    except (TypeError, ValueError):
+                        pass
+        finally:
+            self._sockets.pop(ws, None)
+        return ws
+
+    # --- inbound: the user's message goes to Morzik ------------------------------------------------
+
+    async def _dispatch(self, message: dict) -> None:
+        media = message.get("media") or {}
+        media_urls, media_types, message_type = [], [], MessageType.TEXT
+        text = message.get("text") or ""
+        if media:
+            path = self.media_dir / media.get("file", "")
+            try:
+                data = await asyncio.to_thread(path.read_bytes)
+                from gateway.platforms import base
+                kind = media.get("kind")
+                if kind == "image":
+                    cached = await asyncio.to_thread(base.cache_image_from_bytes, data, path.suffix or ".jpg")
+                    message_type = MessageType.PHOTO
+                elif kind in ("voice", "audio"):
+                    cached = await asyncio.to_thread(base.cache_audio_from_bytes, data, path.suffix or ".m4a")
+                    message_type = MessageType.VOICE if kind == "voice" else MessageType.AUDIO
+                elif kind == "video":
+                    cached = await asyncio.to_thread(base.cache_video_from_bytes, data, path.suffix or ".mp4")
+                    message_type = MessageType.VIDEO
+                else:
+                    cached = await asyncio.to_thread(base.cache_document_from_bytes, data, media.get("name") or path.name)
+                    message_type = MessageType.DOCUMENT
+                media_urls, media_types = [cached], [media.get("mime") or ""]
+            except Exception as exc:
+                logger.warning("[%s] could not hand over an attachment: %s", self.name, exc)
+                text = text or "[вложение не дошло]"
+        source = self.build_source(chat_id=CHAT_ID, chat_name="Morzik App", chat_type="dm", user_id=USER_ID,
+                                   message_id=message["id"])
+        event = MessageEvent(text=text, message_type=message_type, source=source, message_id=message["id"],
+                             media_urls=media_urls, media_types=media_types, raw_message=message,
+                             metadata={"morzik_app_seq": message["seq"]})
+        mc = _morzik_chat()
+        if mc is not None and not text.startswith("/"):
+            try:  # the "ща" when he goes off to look something up without a word (morzik-chat)
+                mc._turn.update(id=mc._turn["id"] + 1, spoke=False, tool=False)
+                if hasattr(mc, "_patch_interim"):
+                    mc._patch_interim()
+                asyncio.ensure_future(mc._ack_if_silent(self, CHAT_ID, mc._turn["id"]))
+            except Exception as exc:
+                logger.debug("[%s] no ack watcher: %s", self.name, exc)
+        await self.handle_message(event)
+
+    async def on_processing_start(self, event: MessageEvent) -> None:
+        seq = (event.metadata or {}).get("morzik_app_seq")
+        if seq:
+            await self._publish(self.store.mark_read_until(int(seq)))
+
+    async def on_processing_complete(self, event, outcome) -> None:
+        await self._set_typing(None)
+
+    # --- outbound: Morzik talks --------------------------------------------------------------------
+
+    def _filter(self, content: str) -> Optional[str]:
+        """Only Morzik talks: Hermes's own texts are dropped or turned into a short line in his voice."""
+        mc = _morzik_chat()
+        if mc is None or not content:
+            return content
+        try:
+            if mc._is_system_banner(content):
+                logger.info("[%s] dropped a Hermes banner", self.name)
+                return None
+            if not mc._is_morzik(content):
+                line = mc._natural_line(content)
+                logger.warning("morzik-app: Hermes said %r -> %s", content[:300], repr(line) if line else "dropped")
+                if line:
+                    mc._remember(line)
+                return line
+        except Exception as exc:
+            logger.debug("[%s] filter failed: %s", self.name, exc)
+        return content
+
+    def _split(self, content: str) -> list[str]:
+        mc = _morzik_chat()
+        if mc is not None:
+            try:
+                return mc._split_parts(content)
+            except Exception:
+                pass
+        # The same rule without morzik-chat: a short chatty reply goes out paragraph by paragraph.
+        text = content.strip()
+        if len(text) > 500 or "```" in text or re.search(r"^\s*([-*•]|\d+[.)])\s", text, re.M):
+            return [text] if text else []
+        parts = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+        return parts if len(parts) <= 3 else [text]
+
+    async def _type_like_a_human(self, text: str) -> None:
+        pause = min(MAX_PAUSE, max(MIN_PAUSE, len(text) / TYPING_CHARS_PER_SECOND)) * random.uniform(.85, 1.15)
+        await self._set_typing("typing")
+        await asyncio.sleep(pause)
+
+    def _spoke(self) -> None:
+        mc = _morzik_chat()
+        if mc is not None:
+            try:
+                mc._turn["spoke"] = True
+            except Exception:
+                pass
+
+    async def _deliver(self, text: str = "", media: Optional[dict] = None, buttons: Optional[list] = None) -> SendResult:
+        message, _ = self.store.add("morzik", text, media=media, buttons=buttons)
+        await self._set_typing(None)
+        await self._publish([message], push=True)
+        return SendResult(success=True, message_id=message["id"])
+
+    async def send(self, chat_id: str, content: str, reply_to: Optional[str] = None,
+                   metadata: Optional[dict[str, Any]] = None) -> SendResult:
+        if self.store is None:
+            return SendResult(success=False, error="not connected", retryable=True)
+        content = self._filter(content or "")
+        if not content:
+            return SendResult(success=True)
+        self._spoke()
+        async with self._send_lock:  # parts of two replies never interleave
+            parts = self._split(content)
+            result, ids = SendResult(success=True), []
+            for part in parts:
+                await self._type_like_a_human(part)
+                result = await self._deliver(part)
+                ids.append(result.message_id)
+            if len(ids) > 1:
+                try:
+                    result.continuation_message_ids = tuple(ids[:-1])
+                except Exception:
+                    pass
+            return result
+
+    async def send_typing(self, chat_id: str, metadata=None) -> None:
+        # While he thinks the chat stays quiet (as in Telegram); "recording…" while a voice reply is made.
+        if _voice_in_progress():
+            await self._set_typing("recording")
+
+    async def stop_typing(self, chat_id: str) -> None:
+        if self._typing_state == "recording" and not _voice_in_progress():
+            await self._set_typing(None)
+
+    async def delete_message(self, chat_id: str, message_id: str) -> bool:
+        changed = self.store.update(str(message_id), deleted=True) if self.store else None
+        if changed:
+            await self._publish([changed])
+        return changed is not None
+
+    async def _send_file(self, path: str, caption: Optional[str], kind: Optional[str] = None,
+                         file_name: Optional[str] = None) -> SendResult:
+        try:
+            data = await asyncio.to_thread(Path(path).read_bytes)
+        except OSError as exc:
+            return SendResult(success=False, error=str(exc))
+        name = file_name or Path(path).name
+        mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
+        extra = {}
+        if kind == "voice":
+            # Telegram-style Opus in Ogg doesn't play on iPhone: turn it into AAC.
+            data, mime, name, extra["duration"] = await asyncio.to_thread(_to_m4a, data, name)
+        caption = self._filter(caption) if caption else None
+        self._spoke()
+        info = await asyncio.to_thread(self._save_media, data, mime, name, kind, **extra)
+        async with self._send_lock:
+            if kind == "voice":
+                await self._set_typing("recording")
+                await asyncio.sleep(.6)
+            return await self._deliver(caption or "", media=info)
+
+    async def send_voice(self, chat_id, audio_path, caption=None, reply_to=None, metadata=None, **kwargs) -> SendResult:
+        return await self._send_file(audio_path, caption, "voice")
+
+    async def send_image_file(self, chat_id, image_path, caption=None, reply_to=None, metadata=None, **kwargs) -> SendResult:
+        return await self._send_file(image_path, caption, "image")
+
+    async def send_video(self, chat_id, video_path, caption=None, reply_to=None, metadata=None, **kwargs) -> SendResult:
+        return await self._send_file(video_path, caption, "video")
+
+    async def send_document(self, chat_id, file_path, caption=None, file_name=None, reply_to=None, metadata=None,
+                            **kwargs) -> SendResult:
+        return await self._send_file(file_path, caption, None, file_name)
+
+    async def send_image(self, chat_id, image_url, caption=None, reply_to=None, metadata=None) -> SendResult:
+        """A picture by URL: shown from the URL, no copy kept."""
+        caption = self._filter(caption) if caption else None
+        self._spoke()
+        info = {"id": "", "kind": "image", "mime": "image/*", "name": "", "url": image_url}
+        async with self._send_lock:
+            return await self._deliver(caption or "", media=info)
+
+    async def get_chat_info(self, chat_id: str) -> dict[str, Any]:
+        return {"name": "Morzik App", "type": "dm", "chat_id": chat_id}
+
+    # --- for other plugins (called from tool threads) ------------------------------------------------
+
+    def post_buttons(self, text: str, buttons: list) -> Optional[str]:
+        """A message from Morzik with buttons (morzik-login's "Войти в X"); returns its id."""
+        if self.store is None:
+            return None
+        message, _ = self.store.add("morzik", text, buttons=buttons)
+        self.publish_threadsafe([message], push=True)
+        return message["id"]
+
+    def clear_buttons(self, message_id: str) -> None:
+        if self.store is None or not message_id:
+            return
+        changed = self.store.update(message_id, buttons=[])
+        self.publish_threadsafe([changed])
+
+
+def _to_m4a(data: bytes, name: str) -> tuple[bytes, str, str, Optional[float]]:
+    """Opus/Ogg (or anything ffmpeg reads) -> AAC in M4A, which AVAudioPlayer plays; unchanged on failure."""
+    import tempfile
+    if not shutil.which("ffmpeg"):
+        return data, mimetypes.guess_type(name)[0] or "audio/ogg", name, None
+    with tempfile.TemporaryDirectory() as tmp:
+        src, dst = Path(tmp) / ("in" + (Path(name).suffix or ".ogg")), Path(tmp) / "out.m4a"
+        src.write_bytes(data)
+        done = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(src), "-vn", "-c:a", "aac", "-b:a", "64k",
+                               "-ac", "1", str(dst)], capture_output=True, timeout=60)
+        if done.returncode != 0 or not dst.exists():
+            logger.warning("morzik-app: ffmpeg failed: %s", done.stderr[:200])
+            return data, mimetypes.guess_type(name)[0] or "audio/ogg", name, None
+        duration = None
+        probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1",
+                                str(dst)], capture_output=True, text=True, timeout=20)
+        try:
+            duration = round(float(probe.stdout.strip()), 2)
+        except ValueError:
+            pass
+        return dst.read_bytes(), "audio/mp4", Path(name).stem + ".m4a", duration
+
+
+# --- registration ------------------------------------------------------------------------------------
+
+def check_requirements() -> bool:
+    try:
+        import aiohttp  # noqa: F401
+    except ImportError:
+        return False
+    return _env("MORZIK_APP_ENABLED", "").lower() in ("1", "true", "yes")
+
+
+def validate_config(config) -> bool:
+    return True
+
+
+def is_connected(config) -> bool:
+    return check_requirements()
+
+
+def _env_enablement() -> Optional[dict]:
+    if not check_requirements():
+        return None
+    return {"home_channel": {"chat_id": CHAT_ID, "name": "Morzik App"}}
+
+
+PLATFORM_HINT = (
+    "You are in the Morzik App: the user's own chat with you on his iPhone, the same conversation manners as in "
+    "Telegram (short messages, a blank line between thoughts, no walls of text). Markdown renders here: **bold**, "
+    "*italic*, `code`, links, lists. Voice replies (text_to_speech) arrive as voice messages; photos and files the "
+    "user sends reach you as attachments. When a site needs the user to log in, use request_login: its button "
+    "shows up right in this chat.")
+
+
+def register(ctx) -> None:
+    import dataclasses
+    kwargs = dict(
+        name=PLATFORM, label="Morzik App", adapter_factory=lambda cfg: MorzikAppAdapter(cfg),
+        check_fn=check_requirements, validate_config=validate_config, is_connected=is_connected,
+        required_env=["MORZIK_APP_ENABLED"], install_hint="set MORZIK_APP_ENABLED=true in ~/.hermes/.env",
+        env_enablement_fn=_env_enablement, cron_deliver_env_var="MORZIK_APP_HOME_CHANNEL",
+        allowed_users_env="MORZIK_APP_ALLOWED_USERS", allow_all_env="MORZIK_APP_ALLOW_ALL_USERS",
+        max_message_length=MAX_MESSAGE_LENGTH, emoji="🐈‍⬛", pii_safe=True, platform_hint=PLATFORM_HINT)
+    try:
+        from gateway.platform_registry import PlatformEntry
+        known = {f.name for f in dataclasses.fields(PlatformEntry)}
+        if "allowlist_suppresses_pairing" in known:
+            kwargs["allowlist_suppresses_pairing"] = True
+    except Exception:
+        pass
+    ctx.register_platform(**kwargs)

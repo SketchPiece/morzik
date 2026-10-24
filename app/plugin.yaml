@@ -1,0 +1,31 @@
+name: morzik-app
+label: Morzik App
+kind: platform
+version: 1.0.0
+description: >
+  The user's own chat with Morzik on the iPhone (Morzik App): HTTPS + WebSocket on 127.0.0.1:8660 behind
+  Tailscale Funnel (/app/), sign-in by a code sent to the user's Telegram, sync by revision, APNs pushes.
+author: Morzik
+requires_env:
+  - name: MORZIK_APP_ENABLED
+    description: "true to run the Morzik App chat"
+    password: false
+optional_env:
+  - name: MORZIK_APP_PORT
+    description: "Local port (default 8660)"
+    password: false
+  - name: MORZIK_APP_APNS_KEY
+    description: "Path to the team's APNs .p8 key"
+    password: false
+  - name: MORZIK_APP_APNS_KEY_ID
+    description: "APNs key id"
+    password: false
+  - name: MORZIK_APP_APNS_TEAM_ID
+    description: "Apple team id"
+    password: false
+  - name: MORZIK_APP_APNS_TOPIC
+    description: "Bundle id of the app (default dev.sketchpiece.morzik)"
+    password: false
+  - name: MORZIK_APP_ALLOWED_USERS
+    description: "owner"
+    password: false
