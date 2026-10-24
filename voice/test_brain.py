@@ -91,25 +91,25 @@ class BrainTest(unittest.TestCase):
 
     def test_calendar_text(self):
         text = brain.calendar_text([
-            {"title": "Daily Meeting", "all_day": False, "location": None,
+            {"title": "Планёрка", "all_day": False, "location": None,
              "start": "2026-10-26T11:00:00", "end": "2026-10-26T11:30:00"},
             {"title": "Dentist", "all_day": False, "location": "Downtown,  Springfield",
              "start": "2026-10-27T12:00:00", "end": "2026-10-27T12:45:00"},
             {"title": "День рождения", "all_day": True, "start": "2026-10-26", "end": "2026-10-27"}])
         self.assertEqual(text.splitlines(), [
-            "понедельник, 26 октября:", "- 11:00–11:30 Daily Meeting", "- весь день День рождения",
+            "понедельник, 26 октября:", "- 11:00–11:30 Планёрка", "- весь день День рождения",
             "вторник, 27 октября:", "- 12:00–12:45 Dentist (Downtown, Springfield)"])
 
     def test_reminders_text(self):
         now = datetime.datetime(2026, 10, 24, 12, 0)
         text = brain.reminders_text([
             {"title": "Без срока", "due": None},
-            {"title": "Отменить подписку", "due": "2026-10-25"},
-            {"title": "Оплатить домен", "due": "2026-10-24T10:00:00"},
+            {"title": "Купить корм", "due": "2026-10-25"},
+            {"title": "Записаться к ветеринару", "due": "2026-10-24T10:00:00"},
             {"title": "Сделано", "due": "2026-10-23", "completed": True}], now)
         self.assertEqual(text.splitlines(), [
-            "Оплатить домен (срок: суббота, 24 октября 10:00, просрочено)",
-            "Отменить подписку (срок: воскресенье, 25 октября)"])
+            "Записаться к ветеринару (срок: суббота, 24 октября 10:00, просрочено)",
+            "Купить корм (срок: воскресенье, 25 октября)"])
 
     def test_weather_text(self):
         text = brain.weather_text({
