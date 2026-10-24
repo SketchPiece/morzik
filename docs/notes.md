@@ -137,9 +137,32 @@ Telegram пользователя Морзик читает через [semafor-
 
 Мак при этом должен быть включён и залогинен: EventKit работает только в сессии пользователя. Если мост не отвечает, Морзик так и говорит.
 
-## Голосовой звонок (в работе)
+## Голосовой звонок
 
-Звонок Морзику голосом из Mini App: агент ElevenLabs «Морзик (тест)» (`agent_9101m5n51bngesp85ymwzr63ab6q`, голос `huzlgRetWoDUAnVe8wEL`, TTS `eleven_v4`) слушает и говорит, а думает сам Морзик в Hermes, с теми же SOUL, памятью и MCP, что в Telegram. ElevenLabs ходит в него как в Custom LLM.
+Звонок Морзику голосом из Mini App: агент ElevenLabs «Морзик (тест)» (`agent_9101m5n51bngesp85ymwzr63ab6q`, голос `huzlgRetWoDUAnVe8wEL`, TTS `eleven_v4`).
+
+### Сейчас: копия Морзика (с 23.10, опубликовано)
+
+Разговаривает модель самого ElevenLabs (Claude Haiku 5.5): так ответ около секунды, а Морзик в Hermes по подписке тратит 2–3 с на каждую реплику. Дела делает настоящий Морзик:
+
+```
+Mini App (после проверки initData) → POST /voice/context → снимок: память (USER.md, MEMORY.md), последние 20 сообщений Telegram за 3 дня, время
+   → dynamic variables {{memory}}, {{recent}}, {{now}} в промпте агента
+ElevenLabs → инструмент ask_morzik → POST /voice/ask → Морзик в Hermes (morzik-voice), одна сессия Hermes на звонок
+ElevenLabs → post-call webhook → POST /voice/after-call (HMAC) → Морзик сохраняет в память только важное
+```
+
+- Промпт агента — `voice/agent-prompt.md`. Характер в нём — голосовая версия SOUL, вписанная руками: SOUL наполовину про переписку в Telegram и местами спорит с голосом («без мяу», «не подкалываешь»). Меняешь характер в SOUL — поправь и голосовую версию.
+- Инструмент `ask_morzik`: POST `https://sketch-server.tail923acf.ts.net/voice/ask`, заголовок `Authorization` из секрета `morzik-voice-bearer` (`Bearer <MORZIK_VOICE_KEY>`), тело `request` (от модели) и `conversation_id` (`system__conversation_id`), таймаут 120 с, Pre-tool speech: Force.
+- Webhook `morzik-after-call` (ElevenAgents settings, по умолчанию для агента), только транскрипт. Секрет HMAC — `MORZIK_VOICE_WEBHOOK_SECRET` в `.env` на сервере; пока его нет, маршрут выключен (404).
+- Ключи в `.env` на сервере: `MORZIK_CONTEXT_KEY` (снимок, его получит бэкенд Mini App), `MORZIK_VOICE_KEY` (инструмент и Custom LLM), `MORZIK_VOICE_AGENT_ID`.
+- Код: `voice/brain.py` (снимок, подпись, запись звонка), маршруты в `voice/proxy.py`, тесты `voice/test_brain.py`. Funnel публикует `/v1/chat/completions` и `/voice/` (`voice/funnel.sh`).
+- Замер 23.10: «что в календаре на понедельник» через ask_morzik — 9,2 с (у Морзика 4 вызова модели: tool_search, tool_describe, календарь, ответ); агент сначала говорит фразу сам.
+- На сервер файлы прокси (`proxy.py`, `brain.py`) кладутся в `/home/morzik/morzik-voice/`; установщик в репозитории sketch-server пока копирует только `proxy.py`.
+
+### Прежний вариант: Custom LLM через Hermes
+
+Каждую реплику думает сам Морзик в Hermes; ElevenLabs ходит в него как в Custom LLM. Остался рабочим запасным путём (`/v1/chat/completions`), агент на него не смотрит.
 
 ```
 ElevenLabs → https://sketch-server.<tailnet>.ts.net/v1/chat/completions (Tailscale Funnel, только этот путь)
