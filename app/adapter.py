@@ -127,6 +127,8 @@ class MorzikAppAdapter(BasePlatformAdapter):
         try:
             self.media_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
             self.store = Store(str(self.state_dir / "chat.db"))
+            self._broadcast_rev = self.store.current_rev()
+            self._flush_lock = asyncio.Lock()
             app = web.Application(client_max_size=MAX_UPLOAD + 1024)
             r = app.router
             r.add_post(f"{API}/pair/start", self._pair_start)
@@ -215,13 +217,23 @@ class MorzikAppAdapter(BasePlatformAdapter):
                 self._sockets.pop(ws, None)
 
     async def _publish(self, messages: list, push: bool = False) -> None:
-        messages = [m for m in messages if m]
-        if not messages:
+        """Sends every stored change the phones haven't had yet, read back from the database in revision order.
+
+        Phones remember the highest revision they got and resume from it, so the socket must never carry a
+        revision before an earlier one (a button stored from a tool thread could otherwise overtake a reply,
+        and a drop right then would lose it). ``messages`` only says which new ones to push."""
+        if self.store is None:
             return
-        await self._broadcast({"type": "messages", "messages": messages, "rev": self.store.current_rev()})
+        async with self._flush_lock:
+            while True:
+                changes, _ = self.store.since(self._broadcast_rev, limit=200)
+                if not changes:
+                    break
+                self._broadcast_rev = changes[-1]["rev"]
+                await self._broadcast({"type": "messages", "messages": changes, "rev": self._broadcast_rev})
         if push:
             for m in messages:
-                if m["role"] == "morzik" and not m["deleted"]:
+                if m and m["role"] == "morzik" and not m["deleted"]:
                     asyncio.ensure_future(self._push(m))
 
     def publish_threadsafe(self, messages: list, push: bool = False) -> None:

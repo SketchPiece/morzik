@@ -99,6 +99,18 @@ async def main():
                     live = json.loads(await asyncio.wait_for(ws.recv(), 5))
                 assert live["messages"][0]["buttons"] == [], live
 
+            # Revisions on the socket only go up, even when changes are stored from another thread.
+            async with websockets.connect(f"ws://127.0.0.1:8661/app/v1/ws?since={adapter.store.current_rev()}", additional_headers=H) as ws:
+                json.loads(await ws.recv())
+                ids = await asyncio.to_thread(lambda: [adapter.store.add("morzik", str(i))[0]["id"] for i in range(3)])
+                await adapter._publish([])
+                seen = []
+                while len(seen) < 3:
+                    ev = json.loads(await asyncio.wait_for(ws.recv(), 5))
+                    if ev["type"] == "messages":
+                        seen += [m["rev"] for m in ev["messages"]]
+                assert seen == sorted(seen), seen
+
             r = await http.post(f"{BASE}/media", headers={**H, "Content-Type": "audio/mp4", "X-Filename": "v.m4a",
                                                           "X-Media-Kind": "voice"}, content=b"\x00\x00\x00\x18ftypM4A ")
             media = r.json()["media"]
