@@ -8,7 +8,7 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
   // headOnly — только голова крупным планом (без тела, лапок и хвоста); dizzy — глаза-спиральки крутятся,
   // голова покачивается по кругу; stars — над головой кружат янтарные звёздочки; transparent — без фона.
   // call — состояние звонка вместо надписи: 'idle' (до звонка), 'ringing', 'listening', 'thinking', 'speaking'.
-  // callStyle — чем оно показано: 'cat' — мимикой (уши, взгляд, наклон головы), 'whiskers' — бегущим светом по усам,
+  // callStyle — чем оно показано: 'cat' — мимикой (уши, взгляд, наклон головы), 'whiskers' — бегущим светом по усам, 'both' — и тем и другим,
   // 'waves' — кольцами вокруг головы (их рисует страница в onFrame(t, level), модель только жива). Рот говорит во всех.
   // level(t) — громкость голоса 0…1 (в звонке getInputVolume/getOutputVolume), без неё — синтетическая речь.
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true, alpha: transparent });
@@ -105,7 +105,10 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     const halo = sprite('rgba(255,170,50,.45)', .62, .7, V(0, 0, -.01), g);
     pupil.userData.base = sx * .048;
     if (dizzy) { pupil.visible = false; iris.material = new THREE.MeshBasicMaterial({ map: spiralTex, toneMapped: false }); }
-    return { lid, pupil, halo, sx, iris };
+    // Закрытый глаз (до звонка): тонкая янтарная дужка «‿» вместо радужки, как будто спит.
+    const shut = new THREE.Mesh(new THREE.TubeGeometry(new THREE.QuadraticBezierCurve3(V(-.17, .01, .01), V(0, -.11, .01), V(.17, .01, .01)), 24, .018, 8), glow(0xFFB43A));
+    shut.visible = false; g.add(shut);
+    return { lid, pupil, halo, sx, iris, shut };
   });
 
   // Усы-морзянка как у первого чёрного кота: по три с каждой стороны, каждый целиком из точек и тире «·–··–».
@@ -218,7 +221,7 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     if (dt != null && dt < 0) dt += CALM; if (dt != null && (dt > .25 || frozen != null)) dt = null;
     const raw = call === 'listening' || call === 'speaking' ? (level ? level(t) : voice(t, call === 'listening' ? 1.7 : 0)) : 0;
     const L = follow(dt, 'L', raw, raw > (sm.L ?? 0) ? .05 : .12);
-    const R = call === 'ringing' ? ring(t) : 0, mime = callStyle === 'cat';
+    const R = call === 'ringing' ? ring(t) : 0, mime = callStyle === 'cat' || callStyle === 'both', idle = call === 'idle';
     // Спокойная база: без косоглазия и язычка, моргает три раза за цикл, голова почти не крутится.
     const open = Math.min(blink(t, 1.3), blink(t, 4.6), blink(t, 7.1));
     const P = { px: 0, py: 0, dil: 1, earF: 0, earT: 0, hx: .015 * Math.sin(w), hy: .02 * Math.sin(w), hz: .025 * Math.sin(w), hp: .015 * Math.sin(w * 2) };
@@ -234,6 +237,7 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     head.rotation.set(P.hx, P.hy, P.hz); head.position.y = .3 + P.hp;
     cat.rotation.y = .03 * Math.sin(w);
     eyes.forEach(E => {
+      E.lid.visible = !idle; E.shut.visible = idle; E.halo.material.opacity = idle ? .25 : E.halo.material.opacity;
       E.lid.scale.y = Math.max(.06, open); E.pupil.position.set(px, py, .004);
       E.pupil.scale.set(.04 * dil, .175 - .02 * (dil - 1), 1);
     });
@@ -244,8 +248,10 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     gap.scale.set(.1, .015 + .085 * m, .03); gap.position.y = -.36 - .05 * m;
     tongue.scale.set(.065, .035 * m, .035); tongue.position.y = -.38 - .09 * m;
     // Наушники: на линии огонёк горит ровно, на гудках вспыхивает.
-    leds.forEach(l => glowTo(l.material, call === 'idle' ? .45 : call === 'ringing' ? .35 + .8 * R : .9 + .25 * L));
-    if (callStyle === 'whiskers') whiskerMats.forEach(mat => {
+    leds.forEach(l => glowTo(l.material, idle ? .15 : call === 'ringing' ? .35 + .8 * R : .9 + .25 * L));
+    // До звонка не подключён: глаза закрыты, усы еле тлеют и медленно дышат.
+    if (idle) whiskerMats.forEach(mat => glowTo(mat, .4 + .12 * Math.sin(w * 2)));
+    if (callStyle === 'whiskers' || callStyle === 'both') whiskerMats.forEach(mat => {
       const u = mat.userData.u, front = (pos, wd = .14) => Math.exp(-(((u - pos) / wd) ** 2));
       let k = .55;
       if (call === 'ringing') k = .35 + 1.3 * Math.max(front((t % 2) / .3 - .05), front(((t % 2) - .42) / .3 - .05));
