@@ -1,0 +1,16 @@
+# Слова, которые распознавание речи в звонке слышит охотнее (ElevenLabs, conversation_config.asr.keywords).
+# Одно слово или фраза на строку. Поменял — залей: voice/push_keywords.sh
+Морзик
+Морзика
+Морзику
+Морзиком
+Андрей
+Lotsia
+Лоция
+Semafor
+Семафор
+Volna
+Волна
+Штурвал
+Helm
+pieces
