@@ -6,7 +6,7 @@ Routes (all POST; everything else is 404):
 - /v1/chat/completions — ElevenLabs Custom LLM: Morzik in Hermes answers every turn of the call.
 - /voice/context — Mini App backend (MORZIK_CONTEXT_KEY): snapshot of Morzik for the agent's own
   model at the start of a call (see brain.py).
-- /voice/ask — ElevenLabs server tool "ask Morzik" (MORZIK_VOICE_KEY): a task from the call, done by
+- /voice/ask — ElevenLabs server tool "perform_task" (MORZIK_VOICE_KEY): a task from the call, done by
   Morzik in Hermes; one Hermes session per call.
 - /voice/after-call — ElevenLabs post-call webhook (HMAC, MORZIK_VOICE_WEBHOOK_SECRET): Morzik reads
   the transcript and saves what matters to memory.
@@ -62,7 +62,27 @@ START_ROUTE = "/voice/start"
 # Called by ElevenLabs, so the caller IP allowlist applies; /voice/context comes from the Mini App backend.
 FROM_ELEVENLABS = (ROUTE, ASK_ROUTE, AFTER_CALL_ROUTE)
 # Said by the agent when Morzik could not do the task.
-ASK_FAILED = "Морзик сейчас не ответил. Скажи пользователю, что не вышло, и предложи попробовать позже."
+ASK_FAILED = "Не удалось выполнить запрос. Коротко сообщи об этом пользователю."
+GREETINGS = (
+    "[mischievously] Мрр, привет. Ну что, соскучился?",
+    "Привет. Что у тебя?",
+    "[smugly] А вот и ты. Рассказывай.",
+    "Привет. Поболтаем или что-то затеял?",
+    "[mischievously] Ну, рассказывай, что там у людей.",
+    "О, привет. Я весь во внимании.",
+)
+_greeting_lock = threading.Lock()
+_last_greeting = None
+
+
+def next_greeting() -> str:
+    """A fresh opening for each call; never repeat the previous one in this process."""
+    global _last_greeting
+    with _greeting_lock:
+        _last_greeting = random.choice([line for line in GREETINGS if line != _last_greeting])
+        return _last_greeting
+
+
 MODEL_ALIAS = "morzik-voice"
 # Request fields passed on to Hermes; model, provider, model_options and the like are not.
 PASSED_FIELDS = ("messages", "stream", "temperature", "max_tokens")
@@ -417,7 +437,9 @@ class Handler(BaseHTTPRequestHandler):
             log.warning("conversation token failed: %s", exc)
             return self.reply(502, "elevenlabs unavailable")
         log.info("call started from the Mini App")
-        self.json_reply(200, {"conversationToken": token, "dynamicVariables": brain.snapshot(s["hermes_home"])})
+        variables = brain.snapshot(s["hermes_home"])
+        variables["greeting"] = next_greeting()
+        self.json_reply(200, {"conversationToken": token, "dynamicVariables": variables})
 
     def context(self, body: dict) -> None:
         self.json_reply(200, brain.snapshot(self.settings["hermes_home"]))
