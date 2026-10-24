@@ -76,8 +76,10 @@ def build(lid=0, look=0, tongue=2, ear=0.0, glow="Y"):
             edge = not inside_ellipse(x + .5, y + .5, cx, 16.5, 1.8, 3.6)
             g[y][x] = "o" if edge and y >= 17 else "O"
         px = int(cx) + look                     # both pupils start in the middle of the eye
-        for x, y in [(px, y) for y in range(14, 20)] + [(px + s, y) for s in (-1, 1) for y in range(15, 19)]:
-            if (x, y) in cells: g[y][x] = "K"         # a narrow oval: the slit, one pixel wider on each side
+        for x, y in [(px + s, y) for s in (-1, 1) for y in range(15, 19)]:
+            if (x, y) in cells: g[y][x] = "o"         # a darker rim makes the slit read a touch wider
+        for y in range(14, 20):
+            if (px, y) in cells: g[y][px] = "K"
         g[13][int(cx) - 1] = g[14][int(cx) - 1] = "H"   # the shine stays put while the pupils move
         g[18][int(cx) + 2] = "H"
         if lid:
