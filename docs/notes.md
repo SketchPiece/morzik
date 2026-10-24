@@ -154,6 +154,7 @@ ElevenLabs → post-call webhook → POST /voice/after-call (HMAC) → Морз�
 ```
 
 - Промпт агента — `voice/agent-prompt.md`. Характер в нём — голосовая версия SOUL, вписанная руками: SOUL наполовину про переписку в Telegram и местами спорит с голосом («без мяу», «не подкалываешь»). Меняешь характер в SOUL — поправь и голосовую версию.
+- Промпт в ElevenLabs меняется и через API: `PATCH https://api.elevenlabs.io/v1/convai/agents/<id>` с `conversation_config.agent.prompt.prompt`, ключом `MORZIK_ELEVENLABS_AGENT_KEY` с сервера (у `ELEVENLABS_API_KEY` нет прав `convai_*`). В ElevenLabs текст лежит без пустых строк между разделами; поменял файл — залей и туда.
 - Инструмент `perform_task`: POST `https://sketch-server.tail923acf.ts.net/voice/ask`, заголовок `Authorization` из секрета `morzik-voice-bearer` (`Bearer <MORZIK_VOICE_KEY>`), тело `request` (от модели) и `conversation_id` (`system__conversation_id`), таймаут 120 с, Pre-tool speech: Force.
 - Webhook `morzik-call-end` (Settings → Webhooks, без событий; в ElevenAgents settings выбран как Post-Call Webhook, только Transcript). Секрет HMAC (`wsec_…`) — `MORZIK_VOICE_WEBHOOK_SECRET` в `.env` на сервере; ElevenLabs показывает его один раз, при создании. Без секрета маршрут выключен (404). Проверено 23.10: подписанный запрос — 200, чужая подпись — 401; на «привет, проверяю связь» Морзик ничего в память не записал.
 - Ключи в `.env` на сервере: `MORZIK_CONTEXT_KEY` (снимок, его получит бэкенд Mini App), `MORZIK_VOICE_KEY` (инструмент и Custom LLM), `MORZIK_VOICE_AGENT_ID`.
