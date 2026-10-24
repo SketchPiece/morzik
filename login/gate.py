@@ -439,6 +439,9 @@ class Handler(BaseHTTPRequestHandler):
 
 class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     daemon_threads = True
+    # The page imports ~50 noVNC modules at once; with the default backlog of 5 most of them got 502 from
+    # Tailscale Serve, which the browser reports as a CORS error.
+    request_queue_size = 256
 
 
 def allow_enroll(minutes: float) -> None:
