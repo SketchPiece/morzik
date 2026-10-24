@@ -135,6 +135,10 @@ def load_settings() -> dict:
         "elevenlabs_api": get("MORZIK_ELEVENLABS_API", "https://api.elevenlabs.io"),
         "app_origin": get("MORZIK_VOICE_APP_ORIGIN", "https://morzik.pieces.run"),
         "hermes_home": pathlib.Path(get("HERMES_HOME", str(pathlib.Path.home() / ".hermes"))),
+        # Live parts of the call snapshot; unset ones are left out.
+        "bridge_url": get("MORZIK_BRIDGE_URL"),  # Morzik Bridge MCP: calendar and reminders
+        "bridge_auth": get("MORZIK_BRIDGE_AUTH"),
+        "weather_at": get("MORZIK_VOICE_WEATHER_AT"),  # "latitude,longitude" for Open-Meteo
         # MORZIK_VOICE_FILLERS: own phrases separated by "|".
         "fillers": [f.strip().rstrip(". ") + "... " for f in get("MORZIK_VOICE_FILLERS").split("|") if f.strip()]
                    or list(FILLERS),
@@ -426,6 +430,10 @@ class Handler(BaseHTTPRequestHandler):
         if str(user.get("id")) != str(s["telegram_user_id"]):
             log.warning("call start refused for Telegram user %s", user.get("id"))
             return self.reply(403, "not allowed")
+        # The snapshot (calendar, weather...) is gathered while ElevenLabs hands out the token.
+        snapshot: list = []
+        snap = threading.Thread(target=lambda: snapshot.append(self.snapshot()), daemon=True)
+        snap.start()
         query = urllib.parse.urlencode({"agent_id": s["agent_id"]})
         request = urllib.request.Request(
             f"{s['elevenlabs_api']}/v1/convai/conversation/token?{query}",
@@ -437,12 +445,19 @@ class Handler(BaseHTTPRequestHandler):
             log.warning("conversation token failed: %s", exc)
             return self.reply(502, "elevenlabs unavailable")
         log.info("call started from the Mini App")
-        variables = brain.snapshot(s["hermes_home"])
+        snap.join(timeout=5)
+        variables = snapshot[0] if snapshot else brain.snapshot(s["hermes_home"])
         variables["greeting"] = next_greeting()
         self.json_reply(200, {"conversationToken": token, "dynamicVariables": variables})
 
+    def snapshot(self) -> dict:
+        s = self.settings
+        latitude, _, longitude = s.get("weather_at", "").partition(",")
+        return brain.snapshot(s["hermes_home"], sources=brain.live_sources(
+            s.get("bridge_url", ""), s.get("bridge_auth", ""), latitude.strip(), longitude.strip()))
+
     def context(self, body: dict) -> None:
-        self.json_reply(200, brain.snapshot(self.settings["hermes_home"]))
+        self.json_reply(200, self.snapshot())
 
     def hermes(self, messages: list, session_id: str | None = None) -> tuple[str | None, str | None]:
         """One non-streaming Morzik turn -> (answer, Hermes session id); answer None on failure."""
