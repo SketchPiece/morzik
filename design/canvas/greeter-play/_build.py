@@ -119,7 +119,7 @@ def scratch():
         elif t < 9.6:
             s.update(lid=0, pupil=3, flat=min(1, (t - 8) * 8), mouth=3 if t < 8.9 else 0, snd="ш-ш! кусь" if t < 8.9 else "")
         else:
-            s.update(flat=ramp(t, 9.6, 10.4, 1, 0), pupil=2 if t < 10.4 else 1, lid=blink(t, [10.8]))
+            s.update(flat=ramp(t, 9.6, 10.4, 1, 0), pupil=2 if t < 10.4 else "soft", lid=blink(t, [10.8]))
         return s
     return dict(file="1-scratch.html", title="1 · Почесать: щурится, мурчит, на перебор — кусь", dur=12, f=f,
                 steps=[(0, "Ведёшь пальцем по ряду туда-сюда (A…L…A)"), (1.0, "Прищуривается, усы светятся медленнее"),
@@ -344,11 +344,11 @@ sketch-server login: <span class="cur">_</span></pre></section>
 def eyes():
     """Static board: the pupil now and two wider ones, on the narrower eyes, the whole head big."""
     faces = [[label, "\n".join(build(pupil=p)[:29])]
-             for p, label in ((0, "Было · щель в 1 пиксель"), ("cross", "Шире только посередине"), (1, "Овал (взял этот)"))]
+             for p, label in ((0, "Щель в 1 пиксель"), ("soft", "Щель с тёмной каймой (взял)"), ("lens", "Линза: шире в середине"), (1, "Овал — слишком широко"))]
     html = f"""<!doctype html><html><head><meta charset="utf-8"><meta name="board" content="1280x800">
 <title>Зрачки пошире: сравнение</title><link rel="stylesheet" href="_shared.css"></head>
 <body class="eyes"><div class="faces" id="faces"></div><script>
-const PAL = {json.dumps(PALETTE)}, FACES = {json.dumps(faces, ensure_ascii=False)}, S = 9;
+const PAL = {json.dumps(PALETTE)}, FACES = {json.dumps(faces, ensure_ascii=False)}, S = 7;
 FACES.forEach(([label, art]) => {{
   const fig = document.createElement("figure"), c = document.createElement("canvas"), rows = art.split("\\n");
   c.width = rows[0].length * S; c.height = rows.length * S;
