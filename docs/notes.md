@@ -140,7 +140,7 @@ Telegram пользователя Морзик читает через [semafor-
 
 ## Голосовой звонок
 
-Звонок Морзику голосом из Mini App: агент ElevenLabs «Морзик (тест)» (`agent_9101m5n51bngesp85ymwzr63ab6q`, голос `huzlgRetWoDUAnVe8wEL`, TTS `eleven_v4`).
+Звонок Морзику голосом из Mini App: агент ElevenLabs «Морзик» (`agent_9101m5n51bngesp85ymwzr63ab6q`, голос `huzlgRetWoDUAnVe8wEL`, TTS `eleven_v4`).
 
 ### Сейчас: копия Морзика (с 23.10, опубликовано)
 
