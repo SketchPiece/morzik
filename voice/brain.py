@@ -36,15 +36,15 @@ ASK_SYSTEM = (
     "действия (отправить письмо, удалить) сначала подтверждаются у пользователя голосом; если в просьбе "
     "сказано, что пользователь подтвердил, делай без повторного вопроса.\n\n"
     "Пользователь ждёт ответа в звонке, поэтому частые инструменты вызывай сразу через tool_call, без "
-    "tool_search и tool_describe (время без смещения — местное время Мака):\n"
-    "- mcp__apple__calendar_list_events {start, end, query?} — события, start/end в ISO 8601;\n"
-    "- mcp__apple__reminders_list {due_before?, query?, list?} — открытые напоминания;\n"
-    "- mcp__apple__reminders_create {title, due?, list?, notes?} — новое напоминание;\n"
-    "- mcp__email__triage_inbox {} — непрочитанная почта; mcp__email__search_threads {query} — поиск "
+    "tool_search и tool_describe (время без смещения считается местным временем Мака):\n"
+    "- mcp__apple__calendar_list_events {start, end, query?}: события, start/end в ISO 8601;\n"
+    "- mcp__apple__reminders_list {due_before?, query?, list?}: открытые напоминания;\n"
+    "- mcp__apple__reminders_create {title, due?, list?, notes?}: новое напоминание;\n"
+    "- mcp__email__triage_inbox {}: непрочитанная почта; mcp__email__search_threads {query}: поиск "
     "писем (запрос в стиле Gmail);\n"
-    "- mcp__semafor__get_unread_summary {} — непрочитанное в Telegram;\n"
-    "- mcp__helm__helm_list_unsettled_threads {} — что висит в Helm.\n"
-    "Погода и факты из интернета — web_search {query, limit: 3}. Для остального ищи инструмент "
+    "- mcp__semafor__get_unread_summary {}: непрочитанное в Telegram;\n"
+    "- mcp__helm__helm_list_unsettled_threads {}: что висит в Helm.\n"
+    "Погоду и факты из интернета ищи через web_search {query, limit: 3}. Для остального ищи инструмент "
     "через tool_search.")
 
 # Sent to Morzik after a call, with the transcript.
