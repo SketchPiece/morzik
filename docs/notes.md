@@ -171,4 +171,9 @@ ElevenLabs → https://sketch-server.<tailnet>.ts.net/v1/chat/completions (Tails
 - Инструмент из MCP стоит три вызова модели: `tool_search` (MCP-инструменты отложены), сам инструмент, ответ. `tools.tool_search` настраивается только глобально, в Telegram его не трогали.
 - Лимит подписки общий с Telegram-Морзиком на Opus: во время замеров 23.10 один раз упёрлись в лимит сессии.
 
+Голос через API Anthropic (пробовали 23.10, пока вернули на подписку). Ключ лежит на сервере в `.env` как `MORZIK_VOICE_ANTHROPIC_KEY` (не `ANTHROPIC_API_KEY`: с ним провайдер подписки отказывается работать, и Telegram-Морзик встал бы). Переключение — закомментированные строки у `model_routes.morzik-voice` в `config.yaml` (`model: claude-haiku-5-5`, `provider: anthropic`, `api_key: "${MORZIK_VOICE_ANTHROPIC_KEY}"`) и перезапуск `hermes-gateway`. Для маршрута со своим ключом нужен `direct_model_requests: true` (включён): без него Hermes не передаёт имя маршрута в проверку и отвечает `permission_denied`. Что выяснили:
+- без лимитов вызов Haiku по API идёт 0,8–1,4 с (вторые и дальше вызовы в ходе), против ~2 с у подписки;
+- новый аккаунт API в Evaluation tier: почти каждый первый вызов хода получал `429 rate_limit_error`, Hermes ждал и повторял, выходило 4–6 с на ответ. Переключать обратно, когда на platform.claude.com/usage/limits будет хотя бы Start tier;
+- `reasoning_overrides.claude-haiku-5-5: none` хуже: модель начинает писать рассуждения прямо в ответ («Today is Friday...»). Оставить `low`.
+
 Для Mini App (шаг 4): первая фраза агента — `{{greeting}}`, Mini App при старте звонка передаёт её случайной из набора приветствий (dynamic variables, переопределения для этого не нужны). Заполнители перед инструментом прокси тоже берёт случайно (`FILLERS` в `voice/proxy.py`, свои — `MORZIK_VOICE_FILLERS` через `|`).
