@@ -1,0 +1,4 @@
+name: morzik-events
+version: "0.1.0"
+description: Pass the owning Hermes cron execution identity to Morzik's event polling script
+author: Morzik
