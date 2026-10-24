@@ -341,38 +341,40 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     const got = src ? src(T) : 0, raw = typeof got === 'number' ? got : got.v, wide = typeof got === 'number' ? .5 : got.wide;
     const L = Math.max(0, spring(dt, 'L', raw, 14, .85));
 
-    // События. Моргает раз в 2–6 с, иногда дважды; взгляд перескакивает раз в 0,6–2,5 с; ухо дёргается раз в 4–10 с.
+    // События. Моргает раз в 2–6 с, иногда дважды; взгляд перескакивает раз в 1,2–4 с; ухо дёргается раз в 7–15 с.
+    // Всё редко и мелко: частые мелкие движения читаются как тревога, спокойный кот двигается мало.
     if (dt != null) {
       if (T > ev.blink) { ev.blinkAt = T; ev.dbl = rand(0, 1) < .15; ev.blink = T + rand(2, call === 'thinking' ? 3.5 : 6); }
       if (T > ev.saccade) {
         const th = call === 'thinking', sp = call === 'speaking', gx0 = ev.gx, gy0 = ev.gy;
-        ev.gx = (th ? .04 : 0) + rand(-1, 1) * (th ? .025 : sp ? .026 : .012); ev.gy = (th ? .055 : 0) + rand(-1, 1) * (th ? .015 : sp ? .016 : .008);
+        ev.gx = (th ? .04 : 0) + rand(-1, 1) * (th ? .02 : sp ? .016 : .01); ev.gy = (th ? .055 : 0) + rand(-1, 1) * (th ? .012 : sp ? .01 : .006);
         // Говоря, иногда отводит взгляд вбок-вверх, как будто подбирает слово, и возвращается.
-        if (sp && rand(0, 1) < .25) { ev.gx = rand(0, 1) < .5 ? -.05 : .05; ev.gy = rand(.015, .035); }
-        ev.saccade = T + (sp ? rand(.35, 1.4) : rand(.6, th ? 1.4 : 2.5));
+        if (sp && rand(0, 1) < .12) { ev.gx = rand(0, 1) < .5 ? -.04 : .04; ev.gy = rand(.012, .025); }
+        ev.saccade = T + (sp ? rand(1.2, 3.2) : th ? rand(.9, 1.8) : rand(1.5, 4));
         // soul.focus: на большом переводе взгляда часто моргает, как живые.
-        if (soul.focus && Math.hypot(ev.gx - gx0, ev.gy - gy0) > .025 && rand(0, 1) < .5 && T - ev.blinkAt > .8) { ev.blinkAt = T; ev.dbl = false; }
+        if (soul.focus && Math.hypot(ev.gx - gx0, ev.gy - gy0) > .025 && rand(0, 1) < .2 && T - ev.blinkAt > 1.5) { ev.blinkAt = T; ev.dbl = false; }
       }
-      // Говоря и слушая, раз в 1–3 с чуть меняет позу: наклон, поворот, кивок вверх-вниз.
-      if (T > ev.pose) { const a = call === 'speaking' ? 1 : call === 'listening' ? .45 : 0;
-        ev.tz = rand(-1, 1) * .055 * a; ev.ty = rand(-1, 1) * .06 * a; ev.tx = rand(-1, 1) * .025 * a; ev.pose = T + rand(1, 3); }
-      if (T > ev.flick) { ev.flickAt = T; ev.flickEar = rand(0, 1) < .5 ? 0 : 1; ev.flick = T + rand(4, call === 'thinking' ? 6 : 10); }
+      // Говоря и слушая, раз в 2,5–5 с чуть меняет позу: наклон, поворот, кивок вверх-вниз. Говоря — на паузе между
+      // фразами (как люди), а не посреди слова; если пауз долго нет, всё равно сменит.
+      if (T > ev.pose && (call !== 'speaking' || ev.quiet > .2 || T > ev.pose + 2.5)) { const a = call === 'speaking' ? .6 : call === 'listening' ? .3 : 0;
+        ev.tz = rand(-1, 1) * .055 * a; ev.ty = rand(-1, 1) * .06 * a; ev.tx = rand(-1, 1) * .025 * a; ev.pose = T + rand(2.5, 5); }
+      if (T > ev.flick) { ev.flickAt = T; ev.flickEar = rand(0, 1) < .5 ? 0 : 1; ev.flick = T + rand(7, call === 'thinking' ? 10 : 15); }
       // Кивки на ударениях: громкость резко выросла над средней (говорит он) — короткий кивок; ты договорил фразу — «угу».
       const a1 = 1 - Math.exp(-dt / .04), a2 = 1 - Math.exp(-dt / .45);
       ev.fast += (raw - ev.fast) * a1; ev.slow += (raw - ev.slow) * a2;
-      if (call === 'speaking' && ev.fast - ev.slow > .22 && ev.fast > .7 && T - ev.nodAt > .5) { ev.nodAt = T; kick('hx', 1.1 * (ev.fast - ev.slow)); kick('hp', .25 * (ev.fast - ev.slow)); }
+      if (call === 'speaking' && ev.fast - ev.slow > .28 && ev.fast > .75 && T - ev.nodAt > 1.1) { ev.nodAt = T; kick('hx', .7 * (ev.fast - ev.slow)); kick('hp', .15 * (ev.fast - ev.slow)); }
       if (raw > .1) { ev.talk += dt; ev.quiet = 0; } else ev.quiet += dt;
-      if (call === 'listening' && ev.quiet > .45 && ev.talk > 1.2) { ev.talk = 0; if (rand(0, 1) < .7) { kick('hx', .45); ev.blink = Math.min(ev.blink, T + .15); } }
+      if (call === 'listening' && ev.quiet > .45 && ev.talk > 1.2) { ev.talk = 0; if (rand(0, 1) < .4) { kick('hx', .3); ev.blink = Math.min(ev.blink, T + .15); } }
       if (call !== 'listening') ev.talk = 0;
     }
     const bl = p => p < 0 || p > 1 ? 1 : p < .35 ? 1 - ease(p / .35) : ease((p - .35) / .65);
     // На ударном слоге глаза чуть прищуриваются, как при улыбке.
-    const open = Math.min(bl((T - ev.blinkAt) / .2), ev.dbl ? bl((T - ev.blinkAt - .28) / .2) : 1) * (1 - .14 * bump(T - ev.nodAt, 0, .6));
+    const open = Math.min(bl((T - ev.blinkAt) / .2), ev.dbl ? bl((T - ev.blinkAt - .28) / .2) : 1) * (1 - .05 * bump(T - ev.nodAt, 0, .6));
     const flick = bump(T - ev.flickAt, 0, .22) - .5 * bump(T - ev.flickAt, .22, .2);
 
     // Цели позы для состояния; дыхание и медленный шум поверх.
     const P = { px: ev.gx, py: ev.gy, dil: 1, earF: 0, earT: 0,
-      hx: ev.tx + .012 * noise(T, .7, 1.9, 1) + (idle ? .025 * Math.sin(T * Math.PI / 2) : 0), hy: ev.ty + .025 * noise(T, .5, 1.3, 2), hz: ev.tz + .02 * noise(T, .6, 1.7, 3), hp: .012 * Math.sin(T * Math.PI / 2) };
+      hx: ev.tx + .008 * noise(T, .4, 1.1, 1) + (idle ? .025 * Math.sin(T * Math.PI / 2) : 0), hy: ev.ty + .015 * noise(T, .3, .8, 2), hz: ev.tz + .012 * noise(T, .35, 1, 3), hp: .012 * Math.sin(T * Math.PI / 2) };
     if (idle) Object.assign(P, { px: 0, py: 0 });
     if (mime && call === 'ringing') Object.assign(P, { earF: .5 + .5 * R, dil: 1.3, hp: P.hp + .02 * R });
     // Слушает: уши вперёд и вздрагивают на голос, голова склонена набок.
@@ -382,34 +384,31 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     if (mime && call === 'speaking') Object.assign(P, { earF: .3, hx: P.hx + .02 * L, hp: P.hp + .008 * L });
     // Эмоция (emote): плавно входит за 0,18 с, держится dur, уходит за 0,35 с; добавляется к позе состояния.
     const ek = !idle && emo.name ? Math.min(ease((T - emo.at) / .18), 1 - ease((T - emo.at - emo.dur) / .35)) : 0, en = ek > 0 ? emo.name : null;
-    if (en === 'laugh') Object.assign(P, { hx: P.hx + .025 * ek * Math.sin(T * Math.PI * 2 * 5), earF: P.earF - .3 * ek, hp: P.hp + .01 * ek });
+    if (en === 'laugh') Object.assign(P, { hx: P.hx + .012 * ek * Math.sin(T * Math.PI * 2 * 3), earF: P.earF - .3 * ek, hp: P.hp + .01 * ek });
     if (en === 'smug') Object.assign(P, { px: P.px + .03 * ek, hz: P.hz + .07 * ek, hy: P.hy + .05 * ek, earT: P.earT + .25 * ek });
     if (en === 'excited') Object.assign(P, { earF: Math.max(P.earF, ek), dil: P.dil + .5 * ek });
     if (en === 'purr') Object.assign(P, { hz: P.hz + .08 * ek * Math.sin(T * 1.6), earF: P.earF - .2 * ek });
     if (en === 'meow') Object.assign(P, { earF: P.earF + .6 * ek, hz: P.hz + .09 * ek, hx: P.hx - .03 * ek });
     if (en === 'ask') Object.assign(P, { hz: P.hz + .12 * ek, hy: P.hy + .04 * ek, earF: P.earF + .6 * ek });
     // soul.focus: глаза ведут, голова догоняет взгляд; soul.iris: зрачок чуть «дышит».
-    if (soul.focus && !idle) { P.hy += ev.gx * 1.1; P.hx -= ev.gy * .9; }
+    if (soul.focus && !idle) { P.hy += ev.gx * .6; P.hx -= ev.gy * .5; }
     if (soul.iris) P.dil += .05 * noise(T, .9, 1.7, 4);
-    const hx = spring(dt, 'hx', P.hx, 1.4, .5), hy = spring(dt, 'hy', P.hy, 1.2, .55), hz = spring(dt, 'hz', P.hz, 1.3, .5), hp = spring(dt, 'hp', P.hp, 2, .5);
+    const hx = spring(dt, 'hx', P.hx, 1.3, .75), hy = spring(dt, 'hy', P.hy, 1.1, .8), hz = spring(dt, 'hz', P.hz, 1.2, .75), hp = spring(dt, 'hp', P.hp, 2, .7);
     const px = spring(dt, 'px', P.px, 7, .85), py = spring(dt, 'py', P.py, 7, .85), dil = spring(dt, 'dil', P.dil, 1, 1);
     const earF = spring(dt, 'earF', P.earF, 2.5, .4), earT = spring(dt, 'earT', P.earT, 4, .4);
     head.rotation.set(hx, hy, hz); head.position.y = .3 + hp;
     cat.rotation.y = 0;
-    // soul.lids: верхнее и нижнее веко (в координатах глаза, радужка ±0,2 × ±0,235). Расслабленный взгляд — верхнее
-    // чуть прикрыто; говорит — нижнее приподнято (улыбка глазами); думает — прищур; хитрит — тяжёлые веки; восторг — распахнуты.
-    // Чтобы веки не приедались: верхнее медленно гуляет по шуму, улыбка глазами — не всю реплику, а изредка
-    // (раз в 3–9 с, своя сила и длина), плюс на смехе; в остальное время нижнего века не видно.
-    if (dt != null && call === 'speaking' && T > ev.smileNext) { ev.smileAt = T; ev.smileK = rand(.35, 1); ev.smileDur = rand(.8, 2.2); ev.smileNext = T + rand(3, 9); }
+    // soul.lids: верхнее и нижнее веко (в координатах глаза, радужка ±0,2 × ±0,235). Только на выражение и едва заметно:
+    // обычно верхнее лишь касается радужки, нижнего не видно; изредка (раз в 8–18 с) лёгкая улыбка глазами, думает —
+    // чуть прищурен, хитрит — веки потяжелее.
+    if (dt != null && call === 'speaking' && T > ev.smileNext) { ev.smileAt = T; ev.smileK = rand(.3, .7); ev.smileDur = rand(1, 2.5); ev.smileNext = T + rand(8, 18); }
     const smile = call === 'speaking' ? ev.smileK * Math.min(ease((T - ev.smileAt) / .3), 1 - ease((T - ev.smileAt - ev.smileDur) / .5)) : 0;
-    let lu = .2 + .025 * noise(T, .23, .61, 5), ll = -.3 + .1 * smile;
-    if (call === 'listening') lu += .02;
-    if (call === 'thinking') lu = .14 + .02 * noise(T, .4, .9, 6);
+    let lu = .25 + .008 * noise(T, .23, .61, 5), ll = -.3 + .08 * smile;
+    if (call === 'thinking') lu = .19 + .01 * noise(T, .4, .9, 6);
     if (call === 'ringing') lu = .3;
-    if (en === 'smug') { lu += (.04 - lu) * ek; ll += (-.17 - ll) * ek; }
+    if (en === 'smug') { lu += (.13 - lu) * ek; ll += (-.23 - ll) * ek; }
     if (en === 'excited') { lu += (.3 - lu) * ek; ll += (-.3 - ll) * ek; }
-    if (en === 'ask' || en === 'meow') lu += (.24 - lu) * ek;
-    lu = spring(dt, 'lidU', lu + .7 * py, 3, .8); ll = spring(dt, 'lidL', ll + .5 * py, 3, .8);
+    lu = spring(dt, 'lidU', lu + .35 * py, 2.2, 1); ll = spring(dt, 'lidL', ll + .25 * py, 2.2, 1);
     eyes.forEach(E => {
       // Смех — глаза-дужки «∩», мурлычет — закрытые «‿», хитрит — полуприкрытые.
       const joy = en === 'laugh' && ek > .45, purr = en === 'purr' && ek > .45;

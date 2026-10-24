@@ -95,43 +95,68 @@ head.setLevel(T => {
 
 // Эмоции по смыслу. Агент ставит в реплику теги ElevenLabs ([laughs], [smugly]…): голос их отыгрывает, а текст
 // реплики приходит сюда (onMessage). Голова отыгрывает их же, плюс голова набок на вопросе и кивок на «!».
-// Время — по месту в тексте и скорости речи; скорость подстраивается: длина реплики / сколько он её говорил.
+// Текст приходит на 0,4–2 с позже начала речи, поэтому время берём из таймингов букв, которые ElevenLabs шлёт
+// с каждым куском звука (onAudioAlignment): эмоция ставится на ту букву, перед которой стоит тег. Буквы считаем
+// без тегов, пробелов и знаков, так текст и тайминги сходятся. Нет таймингов — по скорости речи, как раньше.
 const MOODS = { laughs: 'laugh', giggles: 'laugh', chuckles: 'laugh', happily: 'laugh', mischievously: 'smug', smugly: 'smug',
                 excited: 'excited', surprised: 'excited', purrs: 'purr', meows: 'meow', curious: 'ask' };
+const letters = s => (s.match(/[\p{L}\p{N}]/gu) || []).length;
 let rate = 14, turn = null, cues = [];
 const cueTimes = text => {
   const out = []; let plain = '', m; const re = /\[([a-z ]+)\]\s*/gi; let last = 0;
   while ((m = re.exec(text))) { plain += text.slice(last, m.index); last = re.lastIndex;
-    const mood = MOODS[m[1].trim().toLowerCase()]; if (mood) out.push({ at: plain.length, mood, dur: mood === 'laugh' ? 1.4 : 1.8 }); }
+    const mood = MOODS[m[1].trim().toLowerCase()]; if (mood) out.push({ at: plain.length, li: letters(plain), mood, dur: mood === 'laugh' ? 1.4 : 1.8 }); }
   plain += text.slice(last);
   // Вопрос: голова набок на последних словах; «!»: кивок на конце.
-  for (const q of plain.matchAll(/[?!]/g)) out.push(q[0] === '?' ? { at: Math.max(0, q.index - 14), mood: 'ask', dur: 1.3 } : { at: Math.max(0, q.index - 4), mood: 'exclaim' });
+  for (const q of plain.matchAll(/[?!]/g)) { const li = letters(plain.slice(0, q.index));
+    out.push(q[0] === '?' ? { at: Math.max(0, q.index - 14), li: Math.max(0, li - 11), mood: 'ask', dur: 1.3 } : { at: Math.max(0, q.index - 4), li: Math.max(0, li - 3), mood: 'exclaim', dur: .5 }); }
   return { plain, out };
 };
+// Эмоция с тегом в начале фразы окрашивает всю фразу, её можно сыграть и с опозданием, укоротив; кивок — только вовремя.
+const fire = (c, at, src) => {
+  const late = performance.now() - at, room = c.mood === 'exclaim' ? 250 : c.dur * 700;
+  if (late > room) return diag({ ev: 'skip', mood: c.mood, late: Math.round(late), src });
+  cues.push(setTimeout(() => { head.emote(c.mood, c.dur - Math.max(0, late) / 1000); diag({ ev: 'cue', mood: c.mood, late: Math.round(late), src }); }, Math.max(0, -late)));
+};
 const schedule = () => {
-  if (!turn?.start || !turn.cues) return;
-  turn.cues.forEach(c => { const due = turn.start + c.at / rate * 1000 - performance.now();
-    if (due > -600) cues.push(setTimeout(() => head.emote(c.mood, c.dur), Math.max(0, due))); });
-  turn.cues = null;
+  if (!turn?.cues?.length) return;
+  const now = performance.now(), al = turn.al;
+  turn.cues = turn.cues.filter(c => {
+    if (al.length > c.li) { fire(c, al[c.li], 'al'); return false; }
+    // Таймингов нет совсем, а речь идёт уже 0,4 с — по скорости речи.
+    if (!al.length && turn.start && now - turn.start > 400) { fire(c, turn.start + c.at / rate * 1000, 'rate'); return false; }
+    return true; // буква ещё не пришла — проверим на следующем куске звука
+  });
 };
 const newTurn = () => {
   // Скорость речи по прошлой реплике: только если она длинная и он её точно договорил.
   if (turn?.start && turn.end && turn.len > 40) { const sec = (turn.end - turn.start) / 1000; if (sec > 1.5) rate = Math.min(22, Math.max(9, .7 * rate + .3 * turn.len / sec)); }
-  turn = { start: mode === 'speaking' ? performance.now() : null, end: null, len: 0, cues: null };
+  turn = { start: mode === 'speaking' ? performance.now() : null, end: null, len: 0, base: 0, cues: [], al: [], tag: false };
+};
+// Новая реплика — если прошлая уже прозвучала и он молчал дольше 1,2 с (паузы между фразами — та же реплика).
+const fresh = () => !turn || turn.end && performance.now() - turn.end > 1200;
+const aligned = ({ chars = [], char_start_times_ms: at = [] }) => {
+  if (fresh()) newTurn();
+  const now = performance.now();
+  chars.forEach((ch, i) => { if (ch === '[') turn.tag = true; else if (ch === ']') turn.tag = false;
+    else if (!turn.tag && /[\p{L}\p{N}]/u.test(ch)) turn.al.push(now + (at[i] || 0)); });
+  aligns++; schedule();
 };
 // Временная диагностика синхронизации (24.10): в логе nginx видно, когда пришёл текст реплики относительно начала
-// речи (ms, отрицательное — до неё) и приходят ли тайминги букв ElevenLabs. Убрать, когда разберёмся.
+// речи (ms) и насколько опоздала каждая эмоция (late, мс; src: al — по таймингам букв, rate — по скорости). Убрать, когда разберёмся.
 const diag = q => fetch(`/diag?${new URLSearchParams(q)}`, { keepalive: true }).catch(() => {});
 let aligns = 0;
 const heard = ({ source, role, message }) => {
-  if (role === 'agent') diag({ ev: 'msg', speaking: mode, ms: turn?.start ? Math.round(performance.now() - turn.start) : 'none', len: (message || '').length, tags: ((message || '').match(/\[[a-z ]+\]/gi) || []).join(''), rate: rate.toFixed(1), aligns, old: turn?.len ? 1 : 0 });
+  if (role === 'agent') diag({ ev: 'msg', speaking: mode, ms: turn?.start ? Math.round(performance.now() - turn.start) : 'none', len: (message || '').length, tags: ((message || '').match(/\[[a-z ]+\]/gi) || []).join(''), aligns, al: turn?.al.length ?? 0 });
   if (source === 'user' || role === 'user') { cues.forEach(clearTimeout); cues = []; turn = null; return; }
-  if (!turn || turn.len) newTurn();
-  const { plain, out } = cueTimes(message || ''); turn.len = plain.length; turn.cues = out; schedule();
+  if (fresh()) newTurn();
+  // Вторая часть той же реплики: её буквы идут в таймингах после букв первой.
+  const { plain, out } = cueTimes(message || ''), base = turn.base;
+  turn.cues.push(...out.map(c => ({ ...c, li: c.li + base, at: c.at + turn.len })));
+  turn.len += plain.length; turn.base += letters(plain); schedule();
 };
 const spoke = next => {
-  // Новая реплика — если прошлая уже прозвучала и он молчал дольше 1,2 с (паузы между фразами — та же реплика).
-  if (next === 'speaking') { if (!turn || turn.len && turn.end && performance.now() - turn.end > 1200) newTurn(); if (!turn.start) { turn.start = performance.now(); schedule(); } turn.end = null; }
+  if (next === 'speaking') { if (fresh()) newTurn(); if (!turn.start) { turn.start = performance.now(); schedule(); } turn.end = null; }
   else if (turn?.start) turn.end = performance.now();
 };
 
@@ -159,7 +184,7 @@ async function start() {
       onConnect: () => { clock(true); show(); },
       onModeChange: next => { mode = next.mode; spoke(mode); show(); },
       onMessage: heard,
-      onAudioAlignment: () => { aligns++; },
+      onAudioAlignment: aligned,
       onInterruption: () => { cues.forEach(clearTimeout); cues = []; },
       // Инструмент мозга: пока он работает, Морзик думает (заполнитель перед ним он при этом говорит).
       onAgentToolRequest: ({ tool_name }) => { if (tool_name !== 'end_call') { thinking = true; show(); } },
