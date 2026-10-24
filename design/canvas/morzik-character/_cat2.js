@@ -83,18 +83,20 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
   // уголки сомкнуты; на дне язык. Лежит на поверхности морды, форма пересчитывается каждый кадр (mouthShape).
   const omegaPts = new THREE.CatmullRomCurve3(omega).getPoints(160);
   const omegaY = x => { for (let i = 1; i < omegaPts.length; i++) { const a = omegaPts[i - 1], b = omegaPts[i]; if ((a.x - x) * (b.x - x) <= 0) return a.y + (b.y - a.y) * ((x - a.x) / (b.x - a.x || 1)); } return -.32; };
-  const MN = 32;
+  // Сетка MN × MR: вершины лежат на поверхности морды и посередине, иначе высокий рот режется выпуклой мордой.
+  const MN = 32, MR = 8;
   const flap = mat => {
     const g = new THREE.BufferGeometry(), idx = [];
-    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array((MN + 1) * 6), 3));
-    for (let i = 0; i < MN; i++) idx.push(2 * i, 2 * i + 1, 2 * i + 2, 2 * i + 1, 2 * i + 3, 2 * i + 2);
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array((MN + 1) * (MR + 1) * 3), 3));
+    for (let i = 0; i < MN; i++) for (let j = 0; j < MR; j++) { const a = i * (MR + 1) + j, b = a + MR + 1; idx.push(a, a + 1, b, a + 1, b + 1, b); }
     g.setIndex(idx); mat.side = THREE.DoubleSide;
     const o = new THREE.Mesh(g, mat); o.visible = false; o.frustumCulled = false; head.add(o); return o;
   };
   const mouthIn = flap(new THREE.MeshBasicMaterial({ color: 0x1a0d14 })), mouthTongue = flap(new THREE.MeshBasicMaterial({ color: 0xC9566F }));
   const strip = (o, W, top, bottom, dz) => {
     const p = o.geometry.attributes.position;
-    for (let i = 0; i <= MN; i++) { const x = -W + 2 * W * i / MN, yt = top(x), yb = bottom(x); p.setXYZ(2 * i, x, yt, surf(x, yt) + dz); p.setXYZ(2 * i + 1, x, yb, surf(x, yb) + dz); }
+    for (let i = 0; i <= MN; i++) { const x = -W + 2 * W * i / MN, yt = top(x), yb = bottom(x);
+      for (let j = 0; j <= MR; j++) { const y = yt + (yb - yt) * j / MR; p.setXYZ(i * (MR + 1) + j, x, y, surf(x, y) + dz); } }
     p.needsUpdate = true; o.visible = true;
   };
   // m — насколько открыт (0…1), wd — гласная: 0 «о/у» (уже и глубже), 1 «и/е» (шире и площе).
