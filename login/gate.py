@@ -156,22 +156,32 @@ class Devices:
     def _active(self, devices: list) -> list:
         return [d for d in devices if d.get("active")]
 
-    def can_enroll(self, now: float | None = None) -> bool:
+    def can_enroll(self, now: float | None = None, app: str | None = None) -> bool:
+        """The window is open, no device is set up yet, or (app: the hash of a Morzik App device token) this
+        app install has never had a key: it signed in with a code from Telegram and is on the user's tailnet
+        device, so its first Face ID key needs no window. A second one does: whoever holds the unlocked phone
+        must not be able to swap the key and skip Face ID."""
         now = time.time() if now is None else now
         try:
             window = float(self.window.read_text().strip())
         except (OSError, ValueError):
             window = 0
-        return now < window or not self._active(self._load())
+        devices = self._load()
+        if app and not any(d.get("app") == app and d.get("active") for d in devices):
+            return True
+        return now < window or not self._active(devices)
 
-    def enroll(self, device_id: str, now: float | None = None) -> str | None:
+    def enroll(self, device_id: str, now: float | None = None, app: str | None = None) -> str | None:
         now = time.time() if now is None else now
         with self.lock:
-            if not self.can_enroll(now):
+            if not self.can_enroll(now, app):
                 return None
             key = secrets.token_urlsafe(32)
             devices = [d for d in self._load() if d.get("active") or now - d.get("created", 0) < PENDING_KEY_TTL]
-            devices.append({"hash": key_hash(key), "device": device_id[:80], "created": now, "active": False})
+            entry = {"hash": key_hash(key), "device": device_id[:80], "created": now, "active": False}
+            if app:
+                entry["app"] = app
+            devices.append(entry)
             write_json(self.path, {"devices": devices[-20:]})
             return key
 
@@ -386,12 +396,18 @@ class Handler(BaseHTTPRequestHandler):
         return {"id": request["id"], "site": request.get("site", ""), "url": request.get("url", ""),
                 "waiting": request.get("status") == "waiting"}
 
+    @staticmethod
+    def app_id(body: dict) -> str | None:
+        """The Morzik App install behind a request (hash of its device token, checked in do_POST)."""
+        token = str(body.get("appToken") or "")
+        return key_hash(token) if token else None
+
     def state(self, body: dict, device: str) -> None:
         self.json_reply(200, {"request": self.request_info(body.get("request")),
-                              "canEnroll": self.devices.can_enroll(), "device": device})
+                              "canEnroll": self.devices.can_enroll(app=self.app_id(body)), "device": device})
 
     def enroll(self, body: dict, device: str) -> None:
-        key = self.devices.enroll(f"{device}/{str(body.get('deviceId') or '')}")
+        key = self.devices.enroll(f"{device}/{str(body.get('deviceId') or '')}", app=self.app_id(body))
         if key is None:
             log.warning("enroll refused for %s: no window open", device)
             return self.error(403, "enroll_closed")

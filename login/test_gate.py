@@ -151,9 +151,17 @@ class GateTest(unittest.TestCase):
         self.assertEqual(self.post("/login/state", {**app, "appToken": ""})[1]["error"], "app")
         # The tailnet device check still comes first.
         self.assertEqual(self.post("/login/state", {**app, "appToken": "phone-token"}, ip="100.2.2.2")[1]["error"], "device")
+        # A phone already set up through Telegram: the app still gets its own first key, once.
+        _, telegram_key, _ = self.post("/login/enroll", {"deviceId": "tg"})
+        self.assertEqual(self.post("/login/session", {"deviceKey": telegram_key["deviceKey"]})[0], 200)
+        self.assertFalse(self.post("/login/state", {})[1]["canEnroll"])
+        self.assertTrue(self.post("/login/state", {**app, "appToken": "phone-token"})[1]["canEnroll"])
         _, enrolled, _ = self.post("/login/enroll", {**app, "appToken": "phone-token", "deviceId": "x"})
         status, session, _ = self.post("/login/session", {**app, "appToken": "phone-token", "deviceKey": enrolled["deviceKey"]})
         self.assertEqual(status, 200)
+        # A second key for the same app install needs the window on the server.
+        self.assertFalse(self.post("/login/state", {**app, "appToken": "phone-token"})[1]["canEnroll"])
+        self.assertEqual(self.post("/login/enroll", {**app, "appToken": "phone-token"})[0], 403)
 
     def test_session_needs_a_known_key(self):
         status, reply, _ = self.post("/login/session", {"deviceKey": "guess"})
