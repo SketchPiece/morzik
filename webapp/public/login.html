@@ -101,7 +101,8 @@ const bmCall = (method, ...args) => new Promise(resolve => bm[method](...args, (
 async function faceKey(canEnroll) {
   if (!bm || !tg.isVersionAtLeast?.('7.2')) throw new Refused('Обнови Telegram: нужен вход по Face ID.');
   if (!bm.isInited) await bmCall('init');
-  if (!bm.isBiometricAvailable) throw new Refused('Telegram не видит Face ID на этом устройстве. Открой с телефона.');
+  if (!bm.isBiometricAvailable) throw new Refused(tg.appToken ? 'Не вижу Face ID на этом устройстве: включи его в настройках телефона.'
+                                                               : 'Telegram не видит Face ID на этом устройстве. Открой с телефона.');
   if (!bm.isAccessGranted) {
     if (bm.isAccessRequested) {
       $('retry').textContent = 'Разрешить Face ID';
