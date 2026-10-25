@@ -43,21 +43,36 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(classify.classify("Привет", key="", opener=fake_jev())[:2], (HEAVY, "no-key"))
         self.assertEqual(classify.classify("", key="k", opener=fake_jev())[:2], (HEAVY, "empty"))
 
-    def test_only_message_and_tool_count_are_sent(self):
+    def test_state_has_recent_text_but_no_tool_results(self):
         opener = fake_jev()
-        history = [{"role": "user", "content": "старое"}, {"role": "assistant", "content": "секретный ответ",
-                                                          "tool_calls": [{"id": "1"}, {"id": "2"}]}]
+        history = [
+            {"role": "user", "content": "старый вопрос"},
+            {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "mcp__email__search_threads"}}]},
+            {"role": "tool", "content": "тело письма с секретом"},
+            {"role": "assistant", "content": "Нашёл два письма. Ответить?", "tool_calls": [{"name": "web_search"}]},
+        ]
         classify.classify("x" * 5000, history, key="k", opener=opener)
         state = opener.sent[0]["state"]
-        self.assertEqual(set(state), {"message", "previous_turn_tool_calls"})
-        self.assertEqual(len(state["message"]), classify.MAX_CHARS)
+        self.assertEqual(len(state["new_message"]), classify.MAX_CHARS)
+        self.assertEqual(state["recent_conversation"], [
+            {"role": "user", "text": "старый вопрос"},
+            {"role": "assistant", "text": "Нашёл два письма. Ответить?"},
+        ])
         self.assertEqual(state["previous_turn_tool_calls"], 2)
-        self.assertNotIn("секретный", json.dumps(opener.sent[0], ensure_ascii=False))
+        self.assertEqual(state["previous_turn_tools"], ["mcp__email__search_threads", "web_search"])
+        self.assertNotIn("секретом", json.dumps(opener.sent[0], ensure_ascii=False))
+
+    def test_context_is_capped(self):
+        history = [{"role": "user" if i % 2 else "assistant", "content": "слово " * 500} for i in range(20)]
+        picked = classify.recent_conversation(history)
+        self.assertLessEqual(len(picked), classify.CONTEXT_MESSAGES)
+        self.assertTrue(all(len(m["text"]) <= classify.CONTEXT_MESSAGE_CHARS for m in picked))
+        self.assertLessEqual(sum(len(m["text"]) for m in picked), classify.CONTEXT_TOTAL_CHARS)
 
     def test_attachment_parts_become_a_marker(self):
         opener = fake_jev()
         classify.classify([{"type": "text", "text": "что это"}, {"type": "image_url"}], key="k", opener=opener)
-        self.assertEqual(opener.sent[0]["state"]["message"], "что это [attachment]")
+        self.assertEqual(opener.sent[0]["state"]["new_message"], "что это [attachment]")
 
 
 class HookTest(unittest.TestCase):

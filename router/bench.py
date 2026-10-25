@@ -16,7 +16,7 @@ import classify  # noqa: E402
 
 L, H = classify.LIGHT, classify.HEAVY
 
-# (message, previous turn tool calls, expected)
+# (message, previous turn tool calls or the assistant's last reply, expected)
 CASES = [
     ("Привет", 0, L), ("Ты тут?", 0, L), ("Что умеешь?", 0, L), ("Шо делаешь", 0, L),
     ("Помурлыкай мне :3", 0, L), ("Спасибо, бро", 0, L), ("Ок", 0, L), ("Как оно быть котом?", 0, L),
@@ -34,6 +34,13 @@ CASES = [
     ("Найди в переписке анкету и проверь, где это было написано", 0, H),
     ("Давай ещё раз", 6, H), ("Да", 5, H), ("Давай ещё раз", 0, L), ("Да", 0, L),
     ("Подключи мне новый почтовый ящик", 0, H),
+    # the same short answer means different things after different questions
+    ("Да", "Нашёл письмо от арендодателя. Набросать ответ?", H),
+    ("Да, давай", "Оплатить счёт картой, которая привязана?", H),
+    ("Второй", "Вот два варианта жилья на даты поездки. Какой берём в план?", H),
+    ("Да", "Хочешь, расскажу, почему коты спят по 16 часов?", L),
+    ("Ага", "Поставить напоминание на завтра на 9 утра?", L),
+    ("Найс", "Готово, бронь подтверждена.", L),
 ]
 
 
@@ -42,8 +49,12 @@ def main():
     if not key:
         sys.exit(f"no {classify.KEY_ENV}")
     rows, times = [], []
-    for text, calls, expected in CASES:
-        history = [{"role": "user", "content": "x"}] + [{"role": "assistant", "tool_calls": [{}]}] * calls
+    for text, before, expected in CASES:
+        if isinstance(before, str):
+            history = [{"role": "user", "content": "привет"}, {"role": "assistant", "content": before}]
+        else:
+            history = [{"role": "user", "content": "x"}] + [
+                {"role": "assistant", "tool_calls": [{"name": "browser_exec"}]}] * before
         started = time.monotonic()
         route, reason, confidence = classify.classify(text, history, key=key)
         times.append(time.monotonic() - started)
