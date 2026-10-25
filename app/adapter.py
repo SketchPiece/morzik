@@ -58,6 +58,7 @@ MAX_MESSAGE_LENGTH = 16000
 MAX_UPLOAD = 25 * 1024 * 1024
 LIVE_FOR = 45.0  # a phone that said nothing for this long is treated as gone (pushes resume)
 TYPING_CHARS_PER_SECOND, MIN_PAUSE, MAX_PAUSE = 25, 1.2, 4.0
+COMMANDS = ("/new", "/restart", "/reset")
 
 # The adapter that is running, for other plugins (morzik-login posts its button here too).
 ACTIVE: list = [None]
@@ -374,6 +375,10 @@ class MorzikAppAdapter(BasePlatformAdapter):
         if created:
             await self._publish([message])
             asyncio.ensure_future(self._dispatch(message))
+            if text.lower() in COMMANDS:
+                # "Начать заново" from the app's menu is a command, not a line of the chat.
+                message = self.store.update(message["id"], deleted=True)
+                await self._publish([message])
         return self._json({"message": message, "rev": self.store.current_rev()})
 
     def _media_info(self, media_id: str) -> Optional[dict]:
