@@ -49,6 +49,24 @@
   - `telegram-web-app.js` лежит рядом со страницей (своя копия), шрифты Google грузятся без блокировки.
 - Выложить: `upload_code` для piece `morzik` из `webapp/public/`.
 
+## Приложение на iPhone (Morzik App)
+
+С 24.10.2026 с Морзиком можно говорить без Telegram: своё iOS-приложение (репозиторий `~/Documents/Projects/Morzik-mobile` на Маке, bundle `com.sketchpiece.morzik`, команда 4KSA86792T, ставится через Sideshelf). Чат, нативный звонок, вход на сайты.
+
+```
+iPhone → https://sketch-server.<tailnet>.ts.net/app/v1/… (Tailscale Funnel, путь /app/) → 127.0.0.1:8660
+       → плагин-платформа morzik-app внутри шлюза Hermes (app/ в этом репозитории, ~/.hermes/plugins/morzik-app)
+```
+
+- Для Hermes это ещё один мессенджер рядом с Telegram (`morzik_app`, своя сессия, те же тулсеты, что у telegram, в `platform_toolsets`). Своя история в `~/.hermes/morzik-app/chat.db`, файлы в `media/`. Недавняя переписка из приложения попадает и в снимок для звонка (`recent_messages`).
+- Вход: приложение просит код, бот присылает его пользователю в Telegram (6 цифр, 10 минут, 5 попыток, не чаще раза в 30 с), в ответ — токен устройства (в базе только его хэш). Всё остальное — с `Authorization: Bearer`. Отозвать телефон: `devices.revoked = 1` в `chat.db`.
+- Надёжность: у каждого сообщения `seq` (место в чате) и `rev` (растёт с каждым изменением). Телефон помнит наибольший `rev` и при каждом подключении сокета (`/app/v1/ws?since=REV`) получает всё после него; сервер шлёт изменения строго по возрастанию `rev`, читая их из базы. Отправка идемпотентна по `client_id`, очередь на телефоне лежит на диске и уходит по порядку. Подробности — в начале `app/store.py` и `app/adapter.py`.
+- Манеры как в Telegram: плагин берёт у `morzik-chat` разбивку по мыслям, фильтр текстов Hermes и «ща»; «печатает…» — только перед каждым сообщением, «записывает голосовое…» — пока идёт `text_to_speech`. Голосовые Морзика (Opus) перекодируются ffmpeg в AAC, iPhone Ogg не играет.
+- Пуши: когда у телефона нет открытого сокета, каждое сообщение Морзика уходит в APNs ключом команды `QBQUHQM36G` (тот же, что у Хельма и push-relay Семафора; `~/.hermes/morzik-app/apns.p8`, `MORZIK_APP_APNS_*` в `.env`). Ключ `234D8TU529` в `Volna/core/data` отозван.
+- Звонок: `POST /voice/start` с `appToken` вместо `initData`, дальше ElevenLabs Swift SDK. Голову рисует тот же `morzik.js`, вшитый в приложение (`head.html`, без сети), экран и звук нативные.
+- Вход на сайты: кнопку «Войти в X» `request_login` кладёт и в чат приложения. Приложение открывает `login.html` и даёт странице `window.MorzikApp` вместо `Telegram.WebApp`: токен устройства вместо подписи и ключ шлюза в Keychain под Face ID. Каждая установка приложения может один раз завести свой ключ без окна `allow-enroll`; второй ключ — только через окно.
+- Установка на сервер: `setup/63-morzik-app.sh` в репозитории sketch-server (через `morzik/install.sh`, ключ APNs — `APNS_P8=путь`). Проверки: `python3 app/test_store.py`, `app/smoke_adapter.py` (на сервере, команда в его начале).
+
 ## Где работать над проектом
 
 С 23.10.2026 проект «Морзик» в Хельме живёт на `sketch-server`: репозиторий `~/projects/Morzik` у пользователя `sketch-server-mi` (`origin` по HTTPS, пушит аккаунт SketchPiece). Бот на той же машине, к нему прямо через `sudo -u morzik …`. У Claude на сервере те же глобальные инструкции, память этого проекта, скиллы `pieces`, `canvas`, `artifact-design`, `impeccable`, MCP `pieces` и хук-сторож pieces. Копии на Маке нет: 24.10.2026 она убрана в `~/Documents/Archive/Morzik-mac/repo`. Всё, что собирается только на macOS (мост `bridge/` на Swift, рендер видео аватарки), делается на Маке во временном клоне: склонировать, собрать, закоммитить, запушить.

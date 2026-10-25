@@ -57,6 +57,7 @@ The «Morzik» button left of the message field opens his full-screen app. Tap t
 | Apple | [`bridge/`](bridge) | MCP server in Swift for Calendar and Reminders |
 | Looks | [`design/`](design) | three.js 3D model, design canvases with variants, avatar rendering |
 | App | [`webapp/`](webapp) | Telegram Mini App on [pieces.run](https://pieces.run) |
+| iPhone app | [`app/`](app) | Chat with Morzik without Telegram: a Hermes platform plugin for the Morzik App on iOS (sync, pushes); the app itself is a separate repository |
 
 The bot itself, with its keys and tokens, lives in `~/.hermes` of the `morzik` user on the home server and is not part of this repository; the Calendar and Reminders bridge and Semafor stay on the Mac.
 
@@ -69,6 +70,7 @@ design/
   canvas/      design canvases: picking the character, an app instead of a menu, the login screen
   readme/      the banner at the top of this page
 greeter/       the login screen on the server laptop: pixel Morzik, jokes, keyboard games, sounds
+app/           the Morzik App chat: Hermes platform plugin (HTTPS + WebSocket, sign-in by a Telegram code, APNs)
 subscriptions/ MCP event polling and durable queue for background processing
 voice/         latency bench for the voice endpoint
 webapp/
