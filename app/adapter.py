@@ -65,6 +65,7 @@ COMMANDS = ("/new", "/restart", "/reset")
 ACTIVE: list = [None]
 # The plugin context (to start a turn from a reaction) and reactions waiting for the next turn.
 CTX: list = [None]
+ORIGIN: list = [None]
 REACTION_NOTES: list = []
 REACTION_SETTLE = 2.0  # seconds to let the user settle on an emoji before Morzik answers
 
@@ -509,11 +510,19 @@ class MorzikAppAdapter(BasePlatformAdapter):
                 return  # taken back or changed meanwhile
             prompt = (f"[Пользователь поставил реакцию {emoji} на твоё сообщение «{quote}». "
                       "Это его ответ: пойми его и действуй так, как если бы он ответил словами.]")
-            ok = CTX[0].inject_message(prompt, role="user", origin={
-                "platform": PLATFORM, "chat_id": CHAT_ID, "chat_type": "dm", "user_id": USER_ID})
+            origin = ORIGIN[0] or self._origin()
+            ok = CTX[0].inject_message(prompt, role="user", origin=origin)
             logger.warning("morzik-app: reaction %s on %s -> %s", emoji, message_id, "turn started" if ok else "refused")
 
         asyncio.ensure_future(answer())
+
+    def _origin(self) -> dict:
+        """This chat's session identity when no message came in since the start (as build_source makes it)."""
+        try:
+            return {k: v for k, v in self.build_source(chat_id=CHAT_ID, chat_name="Morzik App", chat_type="dm",
+                                                       user_id=USER_ID).to_dict().items() if k != "message_id"}
+        except Exception:
+            return {"platform": PLATFORM, "chat_id": CHAT_ID, "chat_type": "dm", "user_id": USER_ID}
 
     async def _ws(self, request):
         from aiohttp import web, WSMsgType
@@ -588,6 +597,10 @@ class MorzikAppAdapter(BasePlatformAdapter):
                 text = text or "[вложение не дошло]"
         source = self.build_source(chat_id=CHAT_ID, chat_name="Morzik App", chat_type="dm", user_id=USER_ID,
                                    message_id=message["id"])
+        try:  # where a turn started by a reaction goes: exactly this chat's identity, without the message id
+            ORIGIN[0] = {k: v for k, v in source.to_dict().items() if k != "message_id"}
+        except Exception:
+            pass
         event = MessageEvent(text=text, message_type=message_type, source=source, message_id=message["id"],
                              media_urls=media_urls, media_types=media_types, raw_message=message)
         # No event metadata: Hermes refuses events with metadata it doesn't know (session_envelope).
