@@ -6,7 +6,7 @@ The phone app talks to this adapter over HTTPS (Tailscale Funnel → 127.0.0.1:8
     POST /app/v1/pair/finish  {pairing_id, code}     -> {token, device_id}
     GET  /app/v1/sync?since=REV                      changes after REV (0: the latest messages)
     GET  /app/v1/history?before=SEQ                  older messages
-    POST /app/v1/messages     {client_id, text, media_id?}   idempotent by client_id
+    POST /app/v1/messages     {client_id, text, media_id?, reply_to?: {message_id, quote?}}   idempotent by client_id
     POST /app/v1/media        raw body               upload a photo / voice note / file -> {media}
     GET  /app/v1/media/ID                            download
     POST /app/v1/push         {token, env}           APNs token of this phone
@@ -378,7 +378,8 @@ class MorzikAppAdapter(BasePlatformAdapter):
                 media["duration"] = float(body["duration"])
             except (TypeError, ValueError):
                 pass
-        message, created = self.store.add("user", text, client_id=client_id, media=media)
+        reply = self._reply_for(body.get("reply_to"))
+        message, created = self.store.add("user", text, client_id=client_id, media=media, reply=reply)
         if created:
             await self._publish([message])
             asyncio.ensure_future(self._dispatch(message))
@@ -387,6 +388,17 @@ class MorzikAppAdapter(BasePlatformAdapter):
                 message = self.store.update(message["id"], deleted=True)
                 await self._publish([message])
         return self._json({"message": message, "rev": self.store.current_rev()})
+
+    def _reply_for(self, raw) -> Optional[dict]:
+        """An answer to a message, or to a fragment of it selected in the app (a quote), as Telegram does."""
+        if not isinstance(raw, dict):
+            return None
+        target = self.store.get(str(raw.get("message_id") or ""))
+        if target is None:
+            return None
+        quote = " ".join(str(raw.get("quote") or "").split())[:1000]
+        whole = " ".join((target.get("text") or "").split())
+        return {"id": target["id"], "role": target["role"], "quote": quote or whole[:1000]}
 
     def _media_info(self, media_id: str) -> Optional[dict]:
         if not media_id or "/" in media_id or media_id.startswith("."):
@@ -601,8 +613,11 @@ class MorzikAppAdapter(BasePlatformAdapter):
             ORIGIN[0] = {k: v for k, v in source.to_dict().items() if k != "message_id"}
         except Exception:
             pass
+        reply = message.get("reply") or {}
         event = MessageEvent(text=text, message_type=message_type, source=source, message_id=message["id"],
-                             media_urls=media_urls, media_types=media_types, raw_message=message)
+                             media_urls=media_urls, media_types=media_types, raw_message=message,
+                             reply_to_message_id=reply.get("id"), reply_to_text=reply.get("quote"),
+                             reply_to_is_own_message=reply.get("role") == "morzik")
         # No event metadata: Hermes refuses events with metadata it doesn't know (session_envelope).
         mc = _morzik_chat()
         if mc is not None and not text.startswith("/"):

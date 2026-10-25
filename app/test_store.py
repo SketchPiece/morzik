@@ -125,6 +125,13 @@ class StoreTest(unittest.TestCase):
         self.store = Store(path)
         self.assertEqual(self.store.add("user", "x", client_id="x")[0]["reactions"], [])
 
+    def test_reply_is_stored_with_the_message(self):
+        target, _ = self.store.add("morzik", "напомнить вечером?")
+        reply = {"id": target["id"], "role": "morzik", "quote": "вечером"}
+        mine, _ = self.store.add("user", "да", client_id="r1", reply=reply)
+        self.assertEqual(mine["reply"], reply)
+        self.assertIsNone(target["reply"])
+
     def test_concurrent_writers(self):
         def write(n):
             for i in range(50):

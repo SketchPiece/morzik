@@ -50,7 +50,8 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
 PUBLIC_FIELDS = ("id", "seq", "rev", "client_id", "role", "text", "status", "deleted", "created")
 # Columns added after the first release: (name, definition), added to old databases on open.
-LATER_COLUMNS = (("reactions", "TEXT"),)  # JSON list of the user's emoji on a message
+LATER_COLUMNS = (("reactions", "TEXT"),  # JSON list of the user's emoji on a message
+                 ("reply", "TEXT"))      # JSON: {id, role, quote} — the message (or the fragment of it) answered
 CODE_TTL = 10 * 60
 CODE_ATTEMPTS = 5
 CODE_MIN_INTERVAL = 30
@@ -110,6 +111,7 @@ class Store:
         out["media"] = json.loads(row["media"]) if row["media"] else None
         out["buttons"] = json.loads(row["buttons"]) if row["buttons"] else []
         out["reactions"] = json.loads(row["reactions"]) if row["reactions"] else []
+        out["reply"] = json.loads(row["reply"]) if row["reply"] else None
         out["created"] = int(row["created"] * 1000)
         return out
 
@@ -121,7 +123,7 @@ class Store:
             return self.public(self._get(message_id))
 
     def add(self, role: str, text: str = "", *, client_id: str | None = None, media: dict | None = None,
-            buttons: list | None = None, now: float | None = None) -> tuple[dict, bool]:
+            buttons: list | None = None, reply: dict | None = None, now: float | None = None) -> tuple[dict, bool]:
         """Store a message; returns (message, created). A known client_id returns the stored one."""
         with self._lock:
             if client_id:
@@ -133,10 +135,11 @@ class Store:
                 rev = self._next_rev()
                 message_id = secrets.token_hex(8)
                 self._db.execute(
-                    "INSERT INTO messages(id, client_id, role, text, media, buttons, status, created, rev) "
-                    "VALUES(?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO messages(id, client_id, role, text, media, buttons, reply, status, created, rev) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?)",
                     (message_id, client_id or None, role, text or "", json.dumps(media, ensure_ascii=False) if media else None,
                      json.dumps(buttons, ensure_ascii=False) if buttons else None,
+                     json.dumps(reply, ensure_ascii=False) if reply else None,
                      "sent", now if now is not None else time.time(), rev))
                 self._db.execute("COMMIT")
             except Exception:

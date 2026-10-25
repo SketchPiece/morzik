@@ -111,6 +111,12 @@ async def main():
                         seen += [m["rev"] for m in ev["messages"]]
                 assert seen == sorted(seen), seen
 
+            # A reply with a quote of a fragment: stored with the message.
+            target, _ = adapter.store.add("morzik", "завтра в 10 созвон, в 15:30 стоматолог")
+            r = await http.post(f"{BASE}/messages", headers=H, json={"client_id": "q1", "text": "перенеси",
+                                "reply_to": {"message_id": target["id"], "quote": "в 15:30 стоматолог"}})
+            assert r.json()["message"]["reply"] == {"id": target["id"], "role": "morzik", "quote": "в 15:30 стоматолог"}, r.text
+
             # A reaction: stored, sent to the socket, on a plain message kept for the next turn.
             plain, _ = adapter.store.add("morzik", "готово")
             r = await http.post(f"{BASE}/react", headers=H, json={"message_id": plain["id"], "emoji": "👍"})
