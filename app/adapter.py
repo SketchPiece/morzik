@@ -651,13 +651,13 @@ class MorzikAppAdapter(BasePlatformAdapter):
                 logger.info("[%s] dropped a Hermes banner", self.name)
                 return None
             if not mc._is_morzik(content):
-                line = mc._natural_line(content)
-                if not line and re.search(r"refused|not (?:saved|answered)", content, re.I):
+                line = mc._natural_line(content)  # "" is morzik-chat's "drop, Morzik says it himself"
+                if line is None and re.search(r"refused|not (?:saved|answered)", content, re.I):
                     line = "ой, я прослушал. напиши ещё раз?"  # the user is waiting for an answer
                 logger.warning("morzik-app: Hermes said %r -> %s", content[:300], repr(line) if line else "dropped")
                 if line:
                     mc._remember(line)
-                return line
+                return line or None
         except Exception as exc:
             logger.debug("[%s] filter failed: %s", self.name, exc)
         return content
