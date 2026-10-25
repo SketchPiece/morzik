@@ -111,6 +111,16 @@ async def main():
                         seen += [m["rev"] for m in ev["messages"]]
                 assert seen == sorted(seen), seen
 
+            # A reaction: stored, sent to the socket, on a plain message kept for the next turn.
+            plain, _ = adapter.store.add("morzik", "готово")
+            r = await http.post(f"{BASE}/react", headers=H, json={"message_id": plain["id"], "emoji": "👍"})
+            assert r.json()["message"]["reactions"] == ["👍"], r.text
+            assert A.REACTION_NOTES and "готово" in A.REACTION_NOTES[-1], A.REACTION_NOTES
+            assert A._pre_llm_call(platform="morzik_app")["context"].count("👍") == 1
+            assert not A.REACTION_NOTES
+            r = await http.post(f"{BASE}/react", headers=H, json={"message_id": plain["id"], "emoji": ""})
+            assert r.json()["message"]["reactions"] == [], r.text
+
             r = await http.post(f"{BASE}/media", headers={**H, "Content-Type": "audio/mp4", "X-Filename": "v.m4a",
                                                           "X-Media-Kind": "voice"}, content=b"\x00\x00\x00\x18ftypM4A ")
             media = r.json()["media"]

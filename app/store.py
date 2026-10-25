@@ -49,6 +49,8 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
 
 PUBLIC_FIELDS = ("id", "seq", "rev", "client_id", "role", "text", "status", "deleted", "created")
+# Columns added after the first release: (name, definition), added to old databases on open.
+LATER_COLUMNS = (("reactions", "TEXT"),)  # JSON list of the user's emoji on a message
 CODE_TTL = 10 * 60
 CODE_ATTEMPTS = 5
 CODE_MIN_INTERVAL = 30
@@ -71,6 +73,10 @@ class Store:
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA synchronous=NORMAL")
         self._db.executescript(SCHEMA)
+        have = {r["name"] for r in self._db.execute("PRAGMA table_info(messages)")}
+        for name, kind in LATER_COLUMNS:
+            if name not in have:
+                self._db.execute(f"ALTER TABLE messages ADD COLUMN {name} {kind}")
         os.chmod(path, 0o600)
         self._codes: dict[str, dict] = {}
         self._code_log: list[float] = []
@@ -103,6 +109,7 @@ class Store:
         out["deleted"] = bool(out["deleted"])
         out["media"] = json.loads(row["media"]) if row["media"] else None
         out["buttons"] = json.loads(row["buttons"]) if row["buttons"] else []
+        out["reactions"] = json.loads(row["reactions"]) if row["reactions"] else []
         out["created"] = int(row["created"] * 1000)
         return out
 
@@ -139,12 +146,12 @@ class Store:
 
     def update(self, message_id: str, **fields) -> dict | None:
         """Change text/buttons/status/deleted of a message and give it a new rev."""
-        allowed = {"text", "buttons", "status", "deleted", "media"}
+        allowed = {"text", "buttons", "status", "deleted", "media", "reactions"}
         sets, values = [], []
         for key, value in fields.items():
             if key not in allowed:
                 raise ValueError(key)
-            if key in ("buttons", "media"):
+            if key in ("buttons", "media", "reactions"):
                 value = json.dumps(value, ensure_ascii=False) if value else None
             if key == "deleted":
                 value = 1 if value else 0

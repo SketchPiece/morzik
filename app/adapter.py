@@ -12,6 +12,7 @@ The phone app talks to this adapter over HTTPS (Tailscale Funnel → 127.0.0.1:8
     POST /app/v1/push         {token, env}           APNs token of this phone
     POST /app/v1/read         {seq}                  read up to here (badge)
     POST /app/v1/action       {message_id, button_id}  tap on a reply button
+    POST /app/v1/react        {message_id, emoji}    the user's reaction ("" takes it back)
     GET  /app/v1/ws?since=REV                        live: missed changes first, then new ones, typing
 
 Everything but pairing needs ``Authorization: Bearer <device token>``. See store.py for how sync works.
@@ -62,6 +63,10 @@ COMMANDS = ("/new", "/restart", "/reset")
 
 # The adapter that is running, for other plugins (morzik-login posts its button here too).
 ACTIVE: list = [None]
+# The plugin context (to start a turn from a reaction) and reactions waiting for the next turn.
+CTX: list = [None]
+REACTION_NOTES: list = []
+REACTION_SETTLE = 2.0  # seconds to let the user settle on an emoji before Morzik answers
 
 
 def _env(name: str, default: str = "") -> str:
@@ -142,6 +147,7 @@ class MorzikAppAdapter(BasePlatformAdapter):
             r.add_post(f"{API}/push", self._push_token)
             r.add_post(f"{API}/read", self._read)
             r.add_post(f"{API}/action", self._action)
+            r.add_post(f"{API}/react", self._react)
             r.add_get(f"{API}/ws", self._ws)
             r.add_get(f"{API}/health", lambda request: web.json_response({"ok": True}))
             self._runner = web.AppRunner(app, access_log=None)
@@ -471,6 +477,44 @@ class MorzikAppAdapter(BasePlatformAdapter):
             asyncio.ensure_future(self._dispatch(reply))
         return self._json({"message": reply})
 
+    async def _react(self, request):
+        """One reaction per message, as in Telegram. On Morzik's question or offer it is an answer and starts a
+        turn (after a moment, in case the user picks another one); on anything else he hears of it next turn."""
+        if not self._device(request):
+            return self._error(401, "unauthorized")
+        body = await self._body(request)
+        message = self.store.get(str(body.get("message_id") or ""))
+        emoji = str(body.get("emoji") or "").strip()[:16]
+        if message is None or message["deleted"]:
+            return self._error(404, "no_message")
+        changed = self.store.update(message["id"], reactions=[emoji] if emoji else [])
+        await self._publish([changed])
+        if emoji and changed["role"] == "morzik":
+            self._reacted(changed, emoji)
+        return self._json({"message": changed})
+
+    def _reacted(self, message: dict, emoji: str) -> None:
+        text = " ".join((message.get("text") or "").split()) or "[голосовое или вложение]"
+        quote = text if len(text) <= 400 else text[:400] + "…"
+        if "?" not in text:
+            REACTION_NOTES.append(f"{emoji} на твоё сообщение «{quote}»")
+            del REACTION_NOTES[:-10]
+            return
+        message_id = message["id"]
+
+        async def answer():
+            await asyncio.sleep(REACTION_SETTLE)
+            current = self.store.get(message_id) if self.store else None
+            if not current or current.get("reactions") != [emoji] or CTX[0] is None:
+                return  # taken back or changed meanwhile
+            prompt = (f"[Пользователь поставил реакцию {emoji} на твоё сообщение «{quote}». "
+                      "Это его ответ: пойми его и действуй так, как если бы он ответил словами.]")
+            ok = CTX[0].inject_message(prompt, role="user", origin={
+                "platform": PLATFORM, "chat_id": CHAT_ID, "chat_type": "dm", "user_id": USER_ID})
+            logger.warning("morzik-app: reaction %s on %s -> %s", emoji, message_id, "turn started" if ok else "refused")
+
+        asyncio.ensure_future(answer())
+
     async def _ws(self, request):
         from aiohttp import web, WSMsgType
         device = self._device(request)
@@ -777,8 +821,20 @@ PLATFORM_HINT = (
     "shows up right in this chat.")
 
 
+def _pre_llm_call(platform="", **kwargs):
+    """Reactions on plain messages reach Morzik with the next turn in the app."""
+    if platform != PLATFORM or not REACTION_NOTES:
+        return None
+    notes = "; ".join(REACTION_NOTES)
+    REACTION_NOTES.clear()
+    return {"context": f"Пользователь поставил реакции на твои сообщения: {notes}."}
+
+
 def register(ctx) -> None:
     import dataclasses
+    CTX[0] = ctx
+    if hasattr(ctx, "register_hook"):
+        ctx.register_hook("pre_llm_call", _pre_llm_call)
     kwargs = dict(
         name=PLATFORM, label="Morzik App", adapter_factory=lambda cfg: MorzikAppAdapter(cfg),
         check_fn=check_requirements, validate_config=validate_config, is_connected=is_connected,

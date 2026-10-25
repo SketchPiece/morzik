@@ -108,6 +108,23 @@ class StoreTest(unittest.TestCase):
         self.store.set_push(d2, "tok", "development")
         self.assertEqual([d["id"] for d in self.store.push_devices()], [d2])
 
+    def test_reactions_change_the_revision_and_old_databases_get_the_column(self):
+        m, _ = self.store.add("morzik", "напомнить вечером?")
+        rev = self.store.current_rev()
+        changed = self.store.update(m["id"], reactions=["👍"])
+        self.assertEqual(changed["reactions"], ["👍"])
+        self.assertGreater(changed["rev"], rev)
+        self.assertEqual(self.store.update(m["id"], reactions=[])["reactions"], [])
+        self.store.close()
+        import sqlite3
+        path = os.path.join(self.tmp.name, "old.db")
+        old = sqlite3.connect(path)
+        old.executescript(open(os.path.join(os.path.dirname(__file__), "store.py")).read().split('SCHEMA = """')[1]
+                          .split('"""')[0].replace("  reactions TEXT,\n", ""))
+        old.close()
+        self.store = Store(path)
+        self.assertEqual(self.store.add("user", "x", client_id="x")[0]["reactions"], [])
+
     def test_concurrent_writers(self):
         def write(n):
             for i in range(50):
