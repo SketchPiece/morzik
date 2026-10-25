@@ -384,7 +384,7 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
       }
       // Говоря и слушая, раз в 2,5–5 с чуть меняет позу: наклон, поворот, кивок вверх-вниз. Говоря — на паузе между
       // фразами (как люди), а не посреди слова; если пауз долго нет, всё равно сменит.
-      if (T > ev.pose && (call !== 'speaking' || ev.quiet > .2 || T > ev.pose + 2.5)) { const a = call === 'speaking' ? .6 : call === 'listening' ? .3 : 0;
+      if (T > ev.pose && (call !== 'speaking' || ev.quiet > .2 || T > ev.pose + 2.5)) { const a = call === 'speaking' ? .6 : call === 'listening' || call === 'awake' ? .3 : 0;
         ev.tz = rand(-1, 1) * .055 * a; ev.ty = rand(-1, 1) * .06 * a; ev.tx = rand(-1, 1) * .025 * a; ev.pose = T + rand(2.5, 5); }
       if (T > ev.flick) { ev.flickAt = T; ev.flickEar = rand(0, 1) < .5 ? 0 : 1; ev.flick = T + rand(7, call === 'thinking' ? 10 : 15); }
       // Кивки на ударениях: громкость резко выросла над средней (говорит он) — короткий кивок; ты договорил фразу — «угу».
@@ -409,6 +409,8 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     if (mime && call === 'listening') Object.assign(P, { earF: 1, earT: .08 * L, dil: 1.5, hz: P.hz + .11, hx: P.hx + .02 + .03 * L });
     // Думает: смотрит вверх-вбок (взгляд скачет по точкам там), голова чуть отвёрнута.
     if (mime && call === 'thinking') Object.assign(P, { hy: P.hy + .07, hx: P.hx - .07, hz: P.hz - .04 });
+    // Бодрствует (чат в приложении): голова по центру, ушки чуть вперёд, медленно покачивается влево-вправо.
+    if (mime && call === 'awake') Object.assign(P, { earF: .35, dil: 1.3, hz: P.hz + .045 * Math.sin(T * .55) + .012 * Math.sin(T * 1.3 + 1), hy: P.hy + .02 * Math.sin(T * .37 + 2) });
     if (mime && call === 'speaking') Object.assign(P, { earF: .3, hx: P.hx + .02 * L, hp: P.hp + .008 * L });
     // Эмоция (emote): плавно входит за 0,18 с, держится dur, уходит за 0,35 с; добавляется к позе состояния.
     const ek = !idle && emo.name ? Math.min(ease((T - emo.at) / .18), 1 - ease((T - emo.at - emo.dur) / .35)) : 0, en = ek > 0 ? emo.name : null;
@@ -531,7 +533,7 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
     renderer.render(scene, camera);
     ctxs.forEach((x, i) => { const s = mirrors[i].width; x.clearRect(0, 0, s, s); x.save(); x.beginPath(); x.arc(s / 2, s / 2, s / 2, 0, Math.PI * 2); x.clip(); x.drawImage(canvas, 0, 0, s, s); x.restore(); });
   }
-  // Управление живой головой (приложение): set('idle' | 'ringing' | 'listening' | 'thinking' | 'speaking' | 'dizzy'),
+  // Управление живой головой (приложение): set('idle' | 'ringing' | 'listening' | 'thinking' | 'speaking' | 'awake' | 'dizzy'),
   // setLevel(T => число или { v, wide }) — голос из звонка (null — фразы-макеты).
   const api = {
     set(state) { dizzy = state === 'dizzy'; call = dizzy ? null : state; },
