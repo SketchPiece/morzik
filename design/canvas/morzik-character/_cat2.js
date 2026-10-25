@@ -542,6 +542,13 @@ export function morzikCat2(canvas, { size = 420, t: frozen = null, mirrors = [],
       if (name === 'exclaim') { kick('hx', .6); kick('hp', .1); ev.nodAt = T; return; }
       Object.assign(emo, { name, at: T, dur }); if (name === 'excited') kick('hp', .2);
     },
+    // Микродействия для чата в приложении (без голоса). look(x, y, dur) — посмотреть в точку и задержать там взгляд
+    // (x > 0 — вправо от себя, y > 0 — вверх; ±0,06 — край), голова догоняет взгляд; nod(k) — кивок, k ≈ 0,2–0,8;
+    // flick() — дёрнуть ухом; blink() — моргнуть.
+    look(x, y, dur = 1.5) { const T = lastT ?? 0; ev.gx = x; ev.gy = y; ev.saccade = T + dur; },
+    nod(k = .5) { kick('hx', k); kick('hp', .12 * k); },
+    flick() { const T = lastT ?? 0; ev.flickAt = T; ev.flickEar = rand(0, 1) < .5 ? 0 : 1; },
+    blink() { const T = lastT ?? 0; if (T - ev.blinkAt > .5) { ev.blinkAt = T; ev.dbl = false; } },
   };
   // manual: кадры по запросу (для экспорта аватарки), без цикла анимации.
   if (manual) return { frame, loop: CALM, ...api };
