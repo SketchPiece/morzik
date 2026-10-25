@@ -2,7 +2,7 @@
 
 Registers the auxiliary task ``morzik_light`` (Haiku on the session's provider by default; change
 it in ``auxiliary.morzik_light`` of config.yaml) and returns ``{"turn_route": "morzik_light"}``
-from ``pre_llm_call`` when ``classify`` calls a message light. Hermes binds the route for that
+from ``pre_llm_call`` when Jev (``classify``) calls a message light with enough confidence. Hermes binds the route for that
 turn only (agent/voice_turn_route.py), so the session, its history and cache stay on the main
 model. Needs the ``turn_route`` patch of Hermes (docs/notes.md, «Роутинг лёгких сообщений»).
 """
@@ -46,7 +46,7 @@ def _pre_llm_call(platform="", user_message=None, conversation_history=None, ses
         return None
     started = time.monotonic()
     try:
-        route, reason = _classify.classify(user_message, conversation_history)
+        route, reason, confidence = _classify.classify(user_message, conversation_history)
     except Exception:  # health: allow BLE001 -- a router bug must never break the turn; main model it is
         logger.warning("morzik-router: classify failed, staying on the main model", exc_info=True)
         return None
@@ -55,6 +55,7 @@ def _pre_llm_call(platform="", user_message=None, conversation_history=None, ses
         "session": session_id,
         "route": route,
         "reason": reason,
+        "confidence": round(confidence, 3),
         "chars": len(_classify._text(user_message)),
         "ms": round((time.monotonic() - started) * 1000, 2),
     })
