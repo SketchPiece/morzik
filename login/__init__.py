@@ -27,22 +27,21 @@ POLL = 1.0
 SCHEMA = {
     "name": "request_login",
     "description": (
-        "Log in / sign in to a site in your browser with the user: password, 2FA code, captcha, confirmation on "
-        "his phone, a login that is not saved in browser_vault. Sends him a message with a button that opens "
-        "your screen in the Morzik App (Face ID); he types the password there himself, and you wait until he "
-        "says he is done or not now. Works from Telegram, unlike browser_vault save_login. Never ask for "
-        "passwords or codes in the chat; use this instead. While it waits, do not touch the browser. After "
-        "'done', check that the login worked and carry on."
+        "Войти на сайт в твоём браузере вместе с пользователем: пароль, код 2FA, капча, подтверждение на телефоне, "
+        "вход, которого нет в browser_vault. Отправляет пользователю сообщение с кнопкой, которая открывает твой экран "
+        "в приложении Морзик (Face ID); пароль он вводит там сам, а ты ждёшь, пока он не скажет «готово» или «не сейчас». "
+        "Работает и из Telegram, в отличие от browser_vault save_login. Никогда не проси пароли и коды в чате, "
+        "используй это. Пока ждёшь, не трогай браузер. После «готово» проверь, что вход получился, и продолжай."
     ),
     "parameters": {
         "type": "object",
         "properties": {
-            "site": {"type": "string", "description": "Short site name for the button, e.g. 'Госуслуги', 'Amazon'."},
+            "site": {"type": "string", "description": "Короткое название сайта для кнопки, например «Госуслуги», «Amazon»."},
             "url": {"type": "string", "description": (
-                "Login page to open in a new tab. Leave out to keep the current tab (e.g. you already typed "
-                "the email and the password step is open).")},
+                "Страница входа, откроется в новой вкладке. Не указывай, чтобы остаться на текущей вкладке "
+                "(например, email уже введён и открыт шаг с паролем).")},
             "message": {"type": "string", "description": (
-                "Your short message to the user above the button, in your usual voice: what for, in a few words.")},
+                "Твоё короткое сообщение пользователю над кнопкой, обычным голосом: зачем, в паре слов.")},
         },
         "required": ["site", "message"],
     },
@@ -183,10 +182,10 @@ def _request_login(params, **kwargs):
         pass
     logger.info("morzik-login: %s -> %s", request_id, status)
     notes = {
-        "done": "The user says he logged in. Check the page in the browser and carry on.",
-        "cancelled": "The user said not now. Do not ask again in this task unless he brings it up.",
-        "interrupted": "The user wrote in the chat before finishing; read his message. The button is gone.",
-        "timeout": "No answer in 15 minutes. The button is gone; mention it once if the task still needs it.",
+        "done": "Пользователь говорит, что вошёл. Проверь страницу в браузере и продолжай.",
+        "cancelled": "Пользователь сказал «не сейчас». В этой задаче больше не проси, если сам не вернётся к этому.",
+        "interrupted": "Пользователь написал в чат, не закончив вход; прочитай сообщение. Кнопки больше нет.",
+        "timeout": "За 15 минут ответа нет. Кнопки больше нет; если для задачи это ещё нужно, скажи об этом один раз.",
     }
     return json.dumps({"success": status == "done", "status": status, "note": notes.get(status, "")})
 

@@ -847,15 +847,15 @@ def _env_enablement() -> Optional[dict]:
 
 
 PLATFORM_HINT = (
-    "You are in the Morzik App: the user's own chat with you on his iPhone, the same conversation manners as in "
-    "Telegram (short messages, a blank line between thoughts). Markdown renders here: **bold**, *italic*, `code`, "
-    "links, lists, headings, quotes. One exception to keeping it short, only in this app: when the user asks for a "
-    "report or the details, or you researched something and found a lot that matters, send one long report message "
-    "instead of a Telegraph article (publish_article). Write it as an article: a `#` title, `##` sections, lists "
-    "where they help, all in one message without blank-line splitting into several; the app shows its beginning "
-    "with \"Читать полностью\" and opens it full screen. Everything else stays short. Voice replies (text_to_speech) "
-    "arrive as voice messages; photos and files the user sends reach you as attachments. When a site needs the user "
-    "to log in, use request_login: its button shows up right in this chat.")
+    "Ты в приложении Морзик: это личный чат пользователя с тобой на его iPhone. Манеры те же, что в Telegram: "
+    "короткие сообщения, разные мысли через пустую строку. Здесь отображается Markdown: **жирный**, *курсив*, "
+    "`код`, ссылки, списки, заголовки, цитаты. Одно исключение из «коротко», только в приложении: когда "
+    "пользователь просит отчёт или подробности или ты что-то исследовал и накопилось много важного, пришли одно "
+    "длинное сообщение-отчёт вместо статьи в Telegraph (publish_article). Пиши его как статью: заголовок `#`, "
+    "разделы `##`, списки, где они помогают, всё одним сообщением. Приложение покажет его начало с «Читать "
+    "полностью» и по тапу откроет на весь экран. Всё остальное по-прежнему коротко. Голосовые ответы "
+    "(text_to_speech) приходят голосовыми сообщениями, фото и файлы от пользователя приходят тебе вложениями. Если "
+    "на сайте нужно, чтобы вошёл пользователь, используй request_login: кнопка появится прямо в этом чате.")
 
 
 def _pre_llm_call(platform="", **kwargs):
