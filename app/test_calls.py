@@ -55,6 +55,16 @@ class CallsTest(unittest.TestCase):
         self.assertIn("третий", note)
         self.assertNotIn("первый", note)
 
+    def test_a_burst_of_calls_shows_the_latest(self):
+        for i in range(8):
+            self.log(f"conv_{i}", f"Пользователь: звонок номер {i}.", ended=NOW - 600 + i * 60)
+        note = calls.pending_note(self.home, "morzik_app", now=NOW)
+        self.assertNotIn("номер 2.", note)
+        self.assertIn("номер 3.", note)
+        self.assertIn("номер 7.", note)
+        self.assertIn("Ещё 3 звонков", note)
+        self.assertIsNone(calls.pending_note(self.home, "morzik_app", now=NOW))
+
     def test_long_call_keeps_start_and_end(self):
         text = "Пользователь: начало\n" + "Морзик: бла.\n" * 3000 + "Пользователь: конец"
         self.log("conv_long", text)

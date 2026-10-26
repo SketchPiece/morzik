@@ -20,6 +20,7 @@ CHATS = ("telegram", "morzik_app")
 CALLS_LOG = Path("morzik-voice") / "calls.jsonl"
 SEEN = Path("morzik-voice") / "calls-seen.json"
 MAX_AGE = 3 * 86400  # an older call is not news for a chat
+MAX_CALLS = 5  # a burst of calls (tests) would crowd the note: the latest ones, the rest just counted
 MAX_CHARS = 9000  # under Hermes' hooks.output_spill.max_chars (10000): longer context goes to a file
 _lock = threading.Lock()
 
@@ -50,7 +51,8 @@ def _shorten(text: str, limit: int) -> str:
 
 
 def note(calls: list) -> str:
-    """Calls -> the note Morzik reads with the user's message."""
+    """Calls (oldest first) -> the note Morzik reads with the user's message."""
+    skipped, calls = max(0, len(calls) - MAX_CALLS), calls[-MAX_CALLS:]
     budget = max(500, (MAX_CHARS - 400) // len(calls))
     parts = []
     for call in calls:
@@ -64,6 +66,8 @@ def note(calls: list) -> str:
             "[Между сообщениями в этом чате вы с пользователем говорили голосом, записи ниже; «Морзик» в них — "
             "это ты. Это продолжение того же разговора, помни его и опирайся на него. На сообщение пользователя "
             "выше отвечай как обычно, сами звонки не пересказывай.]")
+    if skipped:
+        head += f"\n(Ещё {skipped} звонков раньше этих не показаны.)"
     return head + "\n\n" + "\n\n".join(parts)
 
 
