@@ -653,7 +653,7 @@ class MorzikAppAdapter(BasePlatformAdapter):
             if not mc._is_morzik(content):
                 line = mc._natural_line(content)  # "" is morzik-chat's "drop, Morzik says it himself"
                 if line is None and re.search(r"refused|not (?:saved|answered)", content, re.I):
-                    line = "ой, я прослушал. напиши ещё раз?"  # the user is waiting for an answer
+                    line = "твоё сообщение у меня потерялось, напиши ещё раз?"  # the user is waiting for an answer
                 logger.warning("morzik-app: Hermes said %r -> %s", content[:300], repr(line) if line else "dropped")
                 if line:
                     mc._remember(line)
