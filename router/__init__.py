@@ -1,4 +1,4 @@
-"""Run light Telegram turns on the fast model, everything else on the main one.
+"""Run light chat turns (Telegram and the Morzik App) on the fast model, everything else on the main one.
 
 Registers the auxiliary task ``morzik_light`` (Haiku on the session's provider by default; change
 it in ``auxiliary.morzik_light`` of config.yaml) and returns ``{"turn_route": "morzik_light"}``
@@ -21,7 +21,7 @@ except ImportError:  # loaded as a top-level module by tests
 logger = logging.getLogger(__name__)
 
 TASK = "morzik_light"
-PLATFORMS = ("telegram",)
+PLATFORMS = ("telegram", "morzik_app")
 
 
 def _log_path():
@@ -68,7 +68,7 @@ def register(ctx):
     ctx.register_auxiliary_task(
         TASK,
         display_name="Morzik: light messages",
-        description="Telegram messages the router calls light (small talk, quick lookups)",
+        description="Chat messages the router calls light (small talk, quick lookups)",
         defaults={"provider": "main", "model": "haiku", "reasoning_effort": "low"},
     )
     ctx.register_hook("pre_llm_call", _pre_llm_call)
