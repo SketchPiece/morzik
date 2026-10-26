@@ -80,6 +80,15 @@ def _app():
     return None
 
 
+def _spoke() -> None:
+    """The button is Morzik talking: morzik-chat's "ща" for a silent turn must not follow it."""
+    import sys
+    for module in list(sys.modules.values()):
+        turn = getattr(module, "_turn", None)
+        if isinstance(turn, dict) and "spoke" in turn and hasattr(module, "_ack_if_silent"):
+            turn["spoke"] = True
+
+
 def _write(path: pathlib.Path, data: dict) -> None:
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1))
@@ -136,6 +145,7 @@ def _request_login(params, **kwargs):
     if sent is None and app_message is None:
         path.unlink(missing_ok=True)
         return json.dumps({"success": False, "error": f"could not message the user: {'; '.join(problems)}"})
+    _spoke()
     logger.info("morzik-login: asked to log in to %s (%s)", site, request_id)
 
     status, deadline = "waiting", time.monotonic() + WAIT
