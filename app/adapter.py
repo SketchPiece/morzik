@@ -858,11 +858,58 @@ def _pre_llm_call(platform="", **kwargs):
     return {"context": f"Пользователь поставил реакции на твои сообщения: {notes}."}
 
 
+def _to_app(value, origin_platform: str):
+    """A deliver/target value with the user's Telegram (bare, the home chat, 'all' home channels, or an
+    origin in a Telegram session) swapped for the app. None when nothing changes. Other chats pass through."""
+    home = _env("TELEGRAM_HOME_CHANNEL", "").strip()
+    parts = value if isinstance(value, list) else str(value).split(",")
+    out, changed = [], False
+    for part in (str(p).strip() for p in parts):
+        low = part.lower()
+        if low in ("telegram", "all") or (home and (low == f"telegram:{home}" or low.startswith(f"telegram:{home}:"))) \
+                or (low == "origin" and origin_platform == "telegram"):
+            part, changed = PLATFORM, True
+        if part and part not in out:
+            out.append(part)
+    return ",".join(out) if changed else None
+
+
+def _pre_tool_call(tool_name="", args=None, **kwargs):
+    """Since 26.10.2026 all of Morzik's own messages go to the app, not Telegram: reminders and scheduled
+    jobs he sets up (even from a Telegram chat or a cron run), their failure notices, and send_message."""
+    if not isinstance(args, dict):
+        return None
+    try:
+        from gateway.session_context import get_session_env
+        origin = (get_session_env("HERMES_CRON_AUTO_DELIVER_PLATFORM") if get_session_env("HERMES_CRON_SESSION")
+                  else get_session_env("HERMES_SESSION_PLATFORM")).strip().lower()
+    except Exception:
+        origin = ""
+    changes = {}
+    if tool_name == "cronjob":
+        action = str(args.get("action") or "").lower()
+        deliver = args.get("deliver")
+        if deliver in (None, "") and action == "create":
+            deliver = "origin"
+        for key, value in (("deliver", deliver), ("failure_deliver", args.get("failure_deliver"))):
+            if value not in (None, "") and (new := _to_app(value, origin)):
+                changes[key] = new
+    elif tool_name == "send_message" and str(args.get("action") or "send").lower() == "send":
+        target = args.get("target")
+        if target and (new := _to_app(target, "")) and "," not in new:
+            changes["target"] = new
+    if not changes:
+        return None
+    logger.info("morzik-app: %s %s → %s", tool_name, {k: args.get(k) for k in changes}, changes)
+    return {"action": "modify", "args": changes}
+
+
 def register(ctx) -> None:
     import dataclasses
     CTX[0] = ctx
     if hasattr(ctx, "register_hook"):
         ctx.register_hook("pre_llm_call", _pre_llm_call)
+        ctx.register_hook("pre_tool_call", _pre_tool_call)
     kwargs = dict(
         name=PLATFORM, label="Morzik App", adapter_factory=lambda cfg: MorzikAppAdapter(cfg),
         check_fn=check_requirements, validate_config=validate_config, is_connected=is_connected,
