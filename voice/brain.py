@@ -5,7 +5,8 @@ ElevenLabs runs its own fast model in the call. Its character is written in the 
 places contradicts the voice rules). Before the call the Mini App backend asks for a snapshot (his
 memory about the user, the latest Telegram messages, the time) and passes it to the agent as dynamic
 variables. During the call the agent hands real work to Morzik in Hermes
-("ask Morzik" tool). After the call ElevenLabs sends the transcript and Morzik saves what matters.
+("ask Morzik" tool). After the call ElevenLabs sends the transcript and Morzik saves what matters;
+the transcript also reaches his chats with the next turn there (log_call, app/calls.py).
 
 Standard library only; the HTTP side lives in proxy.py.
 """
@@ -311,6 +312,41 @@ def transcript_text(transcript: list, max_tool_chars: int = 300) -> str:
                 if value:
                     lines.append(f"(результат инструмента: {value})")
     return "\n".join(lines)
+
+
+# Finished calls for the chats: the morzik-app plugin (app/calls.py) hands each one to Morzik with his next
+# turn in Telegram and in the Morzik App, so he remembers the call there. One JSON object per line:
+# {"id", "started", "duration", "ended", "transcript"} (unix seconds, seconds, unix seconds, text).
+CALLS_LOG = pathlib.Path("morzik-voice") / "calls.jsonl"
+_calls_lock = threading.Lock()
+
+
+def log_call(hermes_home: pathlib.Path, conversation_id: str, transcript: str, started: float | None = None,
+             duration: float | None = None, keep_days: float = 7, now: float | None = None) -> None:
+    """Add a finished call to CALLS_LOG; calls older than keep_days drop out."""
+    now = time.time() if now is None else now
+    path = pathlib.Path(hermes_home) / CALLS_LOG
+    record = {"id": conversation_id, "started": started or now - (duration or 0), "duration": duration or 0,
+              "ended": now, "transcript": transcript}
+    with _calls_lock:
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        kept = []
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    old = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(old, dict) and old.get("id") != conversation_id and \
+                        float(old.get("ended") or 0) >= now - keep_days * 86400:
+                    kept.append(line)
+        except OSError:
+            pass
+        kept.append(json.dumps(record, ensure_ascii=False))
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        tmp.chmod(0o600)
+        tmp.replace(path)
 
 
 class CallSessions:

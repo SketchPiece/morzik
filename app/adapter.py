@@ -45,9 +45,11 @@ from gateway.platforms._shared import get_scoped_secret
 try:
     from .store import Store
     from .apns import Apns
+    from . import calls
 except ImportError:  # loaded as a top-level module
     from store import Store  # type: ignore
     from apns import Apns  # type: ignore
+    import calls  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -850,12 +852,22 @@ PLATFORM_HINT = (
 
 
 def _pre_llm_call(platform="", **kwargs):
-    """Reactions on plain messages reach Morzik with the next turn in the app."""
-    if platform != PLATFORM or not REACTION_NOTES:
-        return None
-    notes = "; ".join(REACTION_NOTES)
-    REACTION_NOTES.clear()
-    return {"context": f"Пользователь поставил реакции на твои сообщения: {notes}."}
+    """Reactions on plain messages reach Morzik with the next turn in the app; voice calls he has not seen in
+    this chat yet, with the next turn in the app or in Telegram (calls.py; only the user talks to this bot)."""
+    parts = []
+    if platform == PLATFORM and REACTION_NOTES:
+        parts.append(f"Пользователь поставил реакции на твои сообщения: {'; '.join(REACTION_NOTES)}.")
+        REACTION_NOTES.clear()
+    if platform in calls.CHATS:
+        try:
+            call_note = calls.pending_note(Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes"), platform)
+        except Exception as exc:
+            logger.warning("morzik-app: calls for %s not read: %s", platform, exc)
+            call_note = None
+        if call_note:
+            logger.info("morzik-app: a voice call goes to the %s chat", platform)
+            parts.append(call_note)
+    return {"context": "\n\n".join(parts)} if parts else None
 
 
 def _to_app(value, origin_platform: str):

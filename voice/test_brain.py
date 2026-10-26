@@ -286,6 +286,7 @@ class RoutesTest(unittest.TestCase):
     def test_after_call_signed_once_and_saved(self):
         event = {"type": "post_call_transcription", "data": {
             "agent_id": AGENT, "conversation_id": "conv_9",
+            "metadata": {"start_time_unix_secs": 1_800_000_000, "call_duration_secs": 75},
             "transcript": [{"role": "agent", "message": "Привет"}, {"role": "user", "message": "Напомни про врача"}]}}
         body = json.dumps(event).encode()
         self.assertEqual(self.post("/voice/after-call", body, {"ElevenLabs-Signature": signed(body, "x")})[0], 401)
@@ -298,6 +299,12 @@ class RoutesTest(unittest.TestCase):
         time.sleep(0.2)
         self.assertEqual(len(FakeHermes.calls), 1)  # the retry was not processed again
         self.assertIn("Пользователь: Напомни про врача", FakeHermes.calls[0][1]["messages"][0]["content"])
+        logged = [json.loads(line) for line in (self.settings_home() / brain.CALLS_LOG).read_text().splitlines()]
+        self.assertEqual([(c["id"], c["started"], c["duration"]) for c in logged], [("conv_9", 1_800_000_000, 75)])
+        self.assertIn("Пользователь: Напомни про врача", logged[0]["transcript"])
+
+    def settings_home(self):
+        return proxy.Handler.settings["hermes_home"]
 
     def test_after_call_for_another_agent_is_ignored(self):
         event = {"type": "post_call_transcription", "data": {

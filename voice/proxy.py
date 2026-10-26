@@ -9,7 +9,7 @@ Routes (all POST; everything else is 404):
 - /voice/ask — ElevenLabs server tool "perform_task" (MORZIK_VOICE_KEY): a task from the call, done by
   Morzik in Hermes; one Hermes session per call.
 - /voice/after-call — ElevenLabs post-call webhook (HMAC, MORZIK_VOICE_WEBHOOK_SECRET): Morzik reads
-  the transcript and saves what matters to memory.
+  the transcript and saves what matters to memory; the call also goes to his chats (brain.log_call).
 - /voice/start — the Mini App (CORS from MORZIK_VOICE_APP_ORIGIN) or the Morzik App (appToken: a device token
   of its chat, checked against ~/.hermes/morzik-app/chat.db). The Mini App brings Telegram initData signed for
   this bot and the user's user id -> a one-time ElevenLabs conversation token (MORZIK_ELEVENLABS_AGENT_KEY)
@@ -528,6 +528,12 @@ class Handler(BaseHTTPRequestHandler):
         if "Пользователь:" not in transcript:
             log.info("after-call %s: the user said nothing, skipped", conversation_id)
             return
+        metadata = data.get("metadata") or {}
+        try:  # for the chats: Morzik gets the call with his next turn in Telegram and the app
+            brain.log_call(self.settings["hermes_home"], conversation_id, transcript,
+                           metadata.get("start_time_unix_secs"), metadata.get("call_duration_secs"))
+        except (OSError, TypeError, ValueError) as exc:
+            log.warning("after-call %s: not logged for the chats: %s", conversation_id, exc)
 
         def save():
             answer, _ = self.hermes([{"role": "user", "content": brain.SAVE_REQUEST.format(
