@@ -62,6 +62,7 @@ MAX_UPLOAD = 25 * 1024 * 1024
 LIVE_FOR = 45.0  # a phone that said nothing for this long is treated as gone (pushes resume)
 TYPING_CHARS_PER_SECOND, MIN_PAUSE, MAX_PAUSE = 25, 1.2, 4.0
 COMMANDS = ("/new", "/restart", "/reset")
+HEADING_RE = re.compile(r"^#{1,6}\s+\S", re.M)
 
 # The adapter that is running, for other plugins (morzik-login posts its button here too).
 ACTIVE: list = [None]
@@ -665,6 +666,8 @@ class MorzikAppAdapter(BasePlatformAdapter):
         return content
 
     def _split(self, content: str) -> list[str]:
+        if HEADING_RE.search(content):  # a report written as an article goes out whole
+            return [content.strip()]
         mc = _morzik_chat()
         if mc is not None:
             try:
@@ -845,10 +848,14 @@ def _env_enablement() -> Optional[dict]:
 
 PLATFORM_HINT = (
     "You are in the Morzik App: the user's own chat with you on his iPhone, the same conversation manners as in "
-    "Telegram (short messages, a blank line between thoughts, no walls of text). Markdown renders here: **bold**, "
-    "*italic*, `code`, links, lists. Voice replies (text_to_speech) arrive as voice messages; photos and files the "
-    "user sends reach you as attachments. When a site needs the user to log in, use request_login: its button "
-    "shows up right in this chat.")
+    "Telegram (short messages, a blank line between thoughts). Markdown renders here: **bold**, *italic*, `code`, "
+    "links, lists, headings, quotes. One exception to keeping it short, only in this app: when the user asks for a "
+    "report or the details, or you researched something and found a lot that matters, send one long report message "
+    "instead of a Telegraph article (publish_article). Write it as an article: a `#` title, `##` sections, lists "
+    "where they help, all in one message without blank-line splitting into several; the app shows its beginning "
+    "with \"Читать полностью\" and opens it full screen. Everything else stays short. Voice replies (text_to_speech) "
+    "arrive as voice messages; photos and files the user sends reach you as attachments. When a site needs the user "
+    "to log in, use request_login: its button shows up right in this chat.")
 
 
 def _pre_llm_call(platform="", **kwargs):
