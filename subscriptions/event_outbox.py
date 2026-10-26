@@ -93,8 +93,9 @@ class Outbox:
         finally:
             ledger.close()
 
-    def claim(self, execution_id, max_events=200):
-        """Reserve a bounded FIFO batch before printing it for the agent."""
+    def claim(self, execution_id, max_events=200, hold=None):
+        """Reserve a bounded FIFO batch before printing it for the agent. Reports ``hold(report)`` is true for
+        stay queued for a later run (a subscription's quiet hours)."""
         ledger = self.ledger()
         try:
             row = ledger.execute("SELECT status FROM executions WHERE id=? AND job_id=?",
@@ -116,6 +117,8 @@ class Outbox:
             chosen, count = [], 0
             for report_id, payload in db.execute("SELECT id, payload FROM reports ORDER BY created_at, id"):
                 report = json.loads(payload)
+                if hold is not None and hold(report):
+                    continue
                 weight = max(1, len(report[1]))  # Report tuple: subscription, events, status flags.
                 if chosen and count + weight > max_events:
                     break

@@ -160,6 +160,29 @@ class DeliveryTest(unittest.TestCase):
         self.assertEqual(json.loads(run("run3")), {"wakeAgent": False})
         self.assertEqual(self.outbox.pending_count(), 0)
 
+    def test_held_reports_stay_queued_and_others_go(self):
+        self.outbox.save_poll("mail", {"cursor": "c1"}, report("e1"))
+        trip = report("t1")
+        trip[0] = {**trip[0], "id": "trip"}
+        self.outbox.save_poll("trip", {"cursor": "t1"}, trip)
+        self.execution("run1", "running")
+        self.assertEqual(self.outbox.claim("run1", hold=lambda r: r[0]["id"] == "mail"), [trip])
+        self.execution("run1", "completed")
+        self.outbox.reconcile()
+        self.execution("run2", "running")
+        self.assertEqual(self.outbox.claim("run2"), [report("e1")])
+
+
+class QuietHoursTest(unittest.TestCase):
+    def test_overnight_and_daytime_ranges(self):
+        self.assertTrue(mcp_events.in_quiet_hours("23-8", 23))
+        self.assertTrue(mcp_events.in_quiet_hours("23-8", 3))
+        self.assertFalse(mcp_events.in_quiet_hours("23-8", 8))
+        self.assertFalse(mcp_events.in_quiet_hours("23-8", 14))
+        self.assertTrue(mcp_events.in_quiet_hours("13-15", 14))
+        self.assertFalse(mcp_events.in_quiet_hours("", 3))
+        self.assertFalse(mcp_events.in_quiet_hours("nonsense", 3))
+
 
 if __name__ == "__main__":
     unittest.main()

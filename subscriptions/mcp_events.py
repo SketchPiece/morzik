@@ -4,6 +4,7 @@
 # A subscription is a file ~/.hermes/subscriptions/<id>.md: a small header (which server from
 # config.yaml → mcp_servers, which event, its arguments) and, below it, what Morzik should do
 # when the event comes. Adding a subscription to any MCP server that offers events is adding a file.
+# An optional header line `quiet_hours: 23-8` keeps its events queued overnight; they reach Morzik in the morning.
 #
 # Without arguments this is the pre-run gate of the cron job «Подписки»: it polls every
 # subscription that is due and wakes Morzik only when events arrived or a subscription started
@@ -111,10 +112,22 @@ def subscriptions():
             "arguments": json.loads(header.get("arguments") or "{}"),
             "enabled": header.get("enabled", "true").lower() != "false",
             "instructions": match.group(2).strip(),
+            "quiet_hours": header.get("quiet_hours", ""),
         }
         if sub["server"] and sub["event"]:
             subs.append(sub)
     return subs
+
+
+def in_quiet_hours(spec, hour=None):
+    """``quiet_hours: 23-8`` in a subscription's header: its events wait in the queue from 23:00 to 8:00 local
+    time and reach Morzik together in the morning."""
+    match = re.fullmatch(r"\s*(\d{1,2})\s*-\s*(\d{1,2})\s*", spec or "")
+    if not match:
+        return False
+    start, end = int(match.group(1)), int(match.group(2))
+    hour = time.localtime().tm_hour if hour is None else hour
+    return start <= hour < end if start <= end else hour >= start or hour < end
 
 
 # ---------- MCP over Streamable HTTP ----------
@@ -257,7 +270,8 @@ def poll_all():
         outbox.save_poll(sub["id"], {"cursor": cursor, "problem": problem,
                                    "next_at": now_ms + next_poll}, report)
 
-    reports = outbox.claim(execution_id, MAX_EVENTS_PER_RUN)
+    quiet = {sub["id"] for sub in subscriptions() if in_quiet_hours(sub.get("quiet_hours"))}
+    reports = outbox.claim(execution_id, MAX_EVENTS_PER_RUN, hold=lambda report: report[0]["id"] in quiet)
     if not reports:
         print(json.dumps({"wakeAgent": False}))
         return
@@ -278,6 +292,33 @@ def poll_all():
         if recovered:
             print("Подписка снова работает без ошибок.")
         print()
+    print_recent_chat()
+
+
+RECENT_CHAT_HOURS, RECENT_CHAT_MESSAGES, RECENT_CHAT_CHARS = 3, 30, 400
+
+
+def print_recent_chat():
+    """The last few hours of the chat, so an event about what was just discussed or done together isn't news."""
+    import sqlite3
+    from datetime import datetime
+    try:
+        db = sqlite3.connect(f"file:{os.path.join(HOME, 'state.db')}?mode=ro", uri=True)
+        rows = db.execute(
+            """select m.timestamp, m.role, m.content from messages m join sessions s on s.id = m.session_id
+               where s.source in ('telegram', 'morzik_app') and m.role in ('user', 'assistant')
+                 and m.timestamp >= ? and coalesce(m.content, '') != '' and coalesce(m.active, 1) = 1
+               order by m.timestamp desc limit ?""",
+            (time.time() - RECENT_CHAT_HOURS * 3600, RECENT_CHAT_MESSAGES)).fetchall()
+    except sqlite3.Error:
+        return
+    print(f"## Чат с пользователем за последние {RECENT_CHAT_HOURS} ч (для контекста, это не события)")
+    if not rows:
+        print("(сообщений не было)")
+    for ts, role, content in reversed(rows):
+        text = " ".join(content.split())
+        text = text if len(text) <= RECENT_CHAT_CHARS else text[:RECENT_CHAT_CHARS] + " …"
+        print(f"[{datetime.fromtimestamp(ts):%H:%M}] {'Пользователь' if role == 'user' else 'Морзик'}: {text}")
 
 
 def list_events(server_name):
