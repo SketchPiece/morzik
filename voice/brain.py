@@ -3,7 +3,7 @@
 ElevenLabs runs its own fast model in the call. Its character is written in the agent prompt
 (voice/agent-prompt.md, a voice version of SOUL.md: SOUL is half about Telegram formatting and in
 places contradicts the voice rules). Before the call the Mini App backend asks for a snapshot (his
-memory about the user, the latest Telegram messages, the time) and passes it to the agent as dynamic
+memory about the user, the latest messages in the app, the time) and passes it to the agent as dynamic
 variables. During the call the agent hands real work to Morzik in Hermes
 ("ask Morzik" tool). After the call ElevenLabs sends the transcript and Morzik saves what matters;
 the transcript also reaches his chats with the next turn there (log_call, app/calls.py).
@@ -18,6 +18,7 @@ import hmac
 import json
 import logging
 import pathlib
+import re
 import sqlite3
 import threading
 import time
@@ -68,9 +69,46 @@ def _read(path: pathlib.Path) -> str:
         return ""
 
 
+def _short(text: str, limit: int) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[:limit].rstrip() + "…"
+
+
+# Hermes stores a few things as user turns; for the call they become who really said what.
+# Cron delivery: Morzik's own message from a background job (hermes cron/scheduler_delivery.py).
+CRON = re.compile(r"\[Cron delivery: [^\]]*\]\s*", re.S)
+# Reaction from the Morzik App (app/adapter.py) -> «👍 на «…»».
+REACTION = re.compile(r"\[Пользователь поставил реакцию (\S+) на твоё сообщение «(.*?)»\. .*\]\s*$", re.S)
+REPLY = re.compile(r"\[Replying to your previous message: \"(.*?)\"\]\s*", re.S)
+OUT_OF_BAND = re.compile(r"\[OUT-OF-BAND USER MESSAGE[^\]]*\].*?\n\n(.*?)\s*\[/OUT-OF-BAND USER MESSAGE\]", re.S)
+# Morzik's short «on it» before the real answer: nothing for the call to know.
+FILLER = re.compile(r"(ща|щас|секунду|сек)\b[^.!?]{0,15}[.!]?", re.I)
+
+
+def _turn(role: str, content: str) -> tuple[str, str, str, bool] | None:
+    """One stored message -> (speaker, text, quoted message, own line) as the user saw it.
+
+    None when there is nothing to say. A cron delivery gets its own line, never glued to the one before."""
+    text = content.strip()
+    if role == "assistant":
+        text = text.replace("[[split]]", "\n")
+        return None if FILLER.fullmatch(text) else ("Морзик", text, "", False)
+    if CRON.match(text):
+        return "Морзик", CRON.sub("", text, count=1).replace("[[split]]", "\n"), "", True
+    if match := OUT_OF_BAND.search(text):
+        text = match.group(1)
+    if match := REACTION.match(text):
+        return "Пользователь", f"{match.group(1)} на «{_short(match.group(2), 60)}»", "", False
+    if match := REPLY.match(text):
+        return "Пользователь", text[match.end():], match.group(1), False
+    return "Пользователь", text, "", False
+
+
 def recent_messages(db_path: pathlib.Path, limit: int = 20, max_age_days: float = 3,
                     max_chars: int = 400, now: float | None = None) -> str:
-    """The latest exchange with the user (Telegram and the Morzik App), oldest first, as plain lines."""
+    """The latest exchange with the user (the Morzik App, Telegram if any), oldest first.
+
+    A heading per day, then «[HH:MM] Кто: текст»; a run of messages from one side is one line."""
     now = time.time() if now is None else now
     try:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
@@ -81,18 +119,33 @@ def recent_messages(db_path: pathlib.Path, limit: int = 20, max_age_days: float 
             "SELECT m.role, m.content, m.timestamp FROM messages m JOIN sessions s ON s.id = m.session_id "
             "WHERE s.source IN ('telegram', 'morzik_app') AND m.role IN ('user', 'assistant') AND m.content IS NOT NULL "
             "AND trim(m.content) != '' AND m.timestamp >= ? ORDER BY m.timestamp DESC LIMIT ?",
-            (now - max_age_days * 86400, limit)).fetchall()
+            (now - max_age_days * 86400, limit * 3)).fetchall()
     except sqlite3.Error:
         return ""
     finally:
         conn.close()
-    lines = []
+    turns = []  # [speaker, text, first stamp, last stamp]
     for role, content, stamp in reversed(rows):
-        text = " ".join(str(content).split())
-        if len(text) > max_chars:
-            text = text[:max_chars].rstrip() + "…"
-        who = "Пользователь" if role == "user" else "Морзик"
-        lines.append(f"[{datetime.datetime.fromtimestamp(stamp):%d.%m %H:%M}] {who}: {text}")
+        turn = _turn(role, str(content))
+        if turn is None or not turn[1].strip():
+            continue
+        who, text, quote, alone = turn
+        # A reply quotes its message, unless that message is the line right above.
+        if quote and not (turns and turns[-1][0] != who and " ".join(quote.split()) in " ".join(turns[-1][1].split())):
+            text = f"(в ответ на «{_short(quote, 60)}») {text}"
+        if turns and turns[-1][0] == who and stamp - turns[-1][3] < 120 and not alone:
+            turns[-1][1] += "\n" + text
+            turns[-1][3] = stamp
+        else:
+            turns.append([who, text, stamp, stamp])
+    lines, day = [], None
+    for who, text, stamp, _ in turns[-limit:]:
+        moment = datetime.datetime.fromtimestamp(stamp)
+        if moment.date() != day:
+            day = moment.date()
+            lines.append(f"{_day(moment)}:")
+        text = " / ".join(part.strip() for part in text.splitlines() if part.strip())
+        lines.append(f"[{moment:%H:%M}] {who}: {_short(text, max_chars)}")
     return "\n".join(lines)
 
 
@@ -138,9 +191,13 @@ def calendar_text(events: list) -> str:
             what = f"весь день {event.get('title') or 'без названия'}"
         else:
             what = f"{start:%H:%M}–{end:%H:%M} {event.get('title') or 'без названия'}"
-        if event.get("location"):
-            what += f" ({' '.join(str(event['location']).split())[:60].rstrip(' ,;')})"
-        days.setdefault(start.date(), []).append(what)
+        # A place by its name only («ICBC Metrotown», not the street address); none if the title has it.
+        place = " ".join(str(event.get("location") or "").split(",")[0].split())[:60]
+        if place and place.lower() not in what.lower():
+            what += f" ({place})"
+        items = days.setdefault(start.date(), [])
+        if what not in items:
+            items.append(what)
     return "\n".join(f"{_day(datetime.datetime.combine(day, datetime.time()))}:\n" + "\n".join(
         f"- {item}" for item in items) for day, items in sorted(days.items()))
 

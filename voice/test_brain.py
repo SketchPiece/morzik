@@ -72,7 +72,7 @@ class BrainTest(unittest.TestCase):
             home = make_home(pathlib.Path(tmp), [
                 ("tg", "user", "из телеграма", now - 60), ("app", "user", "из приложения", now - 30)])
             lines = brain.recent_messages(home / "state.db", now=now).splitlines()
-        self.assertEqual([l.split(": ", 1)[1] for l in lines], ["из телеграма", "из приложения"])
+        self.assertEqual(lines[-1].split(": ", 1)[1], "из телеграма / из приложения")
 
     def test_app_token(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -101,9 +101,36 @@ class BrainTest(unittest.TestCase):
                 ("api", "user", "голосовое", now - 10)])
             text = brain.recent_messages(home / "state.db", now=now)
         lines = text.splitlines()
-        self.assertEqual(len(lines), 2)
-        self.assertTrue(lines[0].endswith("Пользователь: Привет, как дела?"))
-        self.assertTrue(lines[1].endswith("Морзик: Мур, хорошо"))
+        self.assertEqual(len(lines), 3)
+        self.assertTrue(lines[0].endswith(":"))
+        self.assertTrue(lines[1].endswith("Пользователь: Привет, как дела?"))
+        self.assertTrue(lines[2].endswith("Морзик: Мур, хорошо"))
+
+    def test_recent_messages_say_who_really_spoke(self):
+        now = datetime.datetime(2026, 10, 26, 20, 0).timestamp()
+        oob = ("[OUT-OF-BAND USER MESSAGE — a direct message from the user]\nGateway message origin:\n"
+               '{"platform": "morzik_app"}\nDo not guess a reply destination.\n\nНу что там\n[/OUT-OF-BAND USER MESSAGE]')
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(pathlib.Path(tmp), [
+                ("app", "user", "[Cron delivery: Подписки]\nпришёл счёт за свет [[split]] оплатить?", now - 3600),
+                ("app", "user", "[Пользователь поставил реакцию 👍 на твоё сообщение «оплатить?». "
+                                "Это его ответ: пойми его и действуй так, как если бы он ответил словами.]", now - 3000),
+                ("app", "assistant", "Ща гляну", now - 2990),
+                ("app", "assistant", "оплатил", now - 2950),
+                ("app", "user", '[Replying to your previous message: "оплатил"] спасибо', now - 600),
+                ("app", "user", "[Cron delivery: Dreamer]\nзавтра дождь", now - 590),
+                ("app", "user", '[Replying to your previous message: "пришёл счёт за свет"] сколько?', now - 300),
+                ("app", "user", oob, now - 60)])
+            lines = brain.recent_messages(home / "state.db", now=now).splitlines()
+        self.assertEqual(lines, [
+            "понедельник, 26 октября:",
+            "[19:00] Морзик: пришёл счёт за свет / оплатить?",
+            "[19:10] Пользователь: 👍 на «оплатить?»",
+            "[19:10] Морзик: оплатил",
+            "[19:50] Пользователь: спасибо",
+            "[19:50] Морзик: завтра дождь",
+            "[19:55] Пользователь: (в ответ на «пришёл счёт за свет») сколько?",
+            "[19:59] Пользователь: Ну что там"])
 
     def test_snapshot(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -119,10 +146,13 @@ class BrainTest(unittest.TestCase):
              "start": "2026-10-26T11:00:00", "end": "2026-10-26T11:30:00"},
             {"title": "Dentist", "all_day": False, "location": "Downtown,  Springfield",
              "start": "2026-10-27T12:00:00", "end": "2026-10-27T12:45:00"},
-            {"title": "День рождения", "all_day": True, "start": "2026-10-26", "end": "2026-10-27"}])
+            {"title": "День рождения", "all_day": True, "start": "2026-10-26", "end": "2026-10-27"},
+            {"title": "День рождения", "all_day": True, "start": "2026-10-26", "end": "2026-10-27"},
+            {"title": "Downtown walk", "all_day": False, "location": "Downtown",
+             "start": "2026-10-27T15:00:00", "end": "2026-10-27T16:00:00"}])
         self.assertEqual(text.splitlines(), [
             "понедельник, 26 октября:", "- 11:00–11:30 Планёрка", "- весь день День рождения",
-            "вторник, 27 октября:", "- 12:00–12:45 Dentist (Downtown, Springfield)"])
+            "вторник, 27 октября:", "- 12:00–12:45 Dentist (Downtown)", "- 15:00–16:00 Downtown walk"])
 
     def test_reminders_text(self):
         now = datetime.datetime(2026, 10, 24, 12, 0)
