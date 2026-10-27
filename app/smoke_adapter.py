@@ -4,7 +4,8 @@
 
 A throwaway state dir and port 8661; an echo handler stands in for Morzik. Checks sign-in (the code is read
 from the store, Telegram is stubbed), send + idempotent resend, the live socket (backlog, typing, split parts),
-reconnect from a revision, history, read marks, media round trip and a button posted from another thread.
+reconnect from a revision, history, read marks, media round trip, a button posted from another thread and
+"busy" (tool calls and mid-turn messages from the agent's threads, background subagents, reset on failure).
 """
 
 import asyncio
@@ -37,6 +38,101 @@ A.register(Ctx())
 BASE = "http://127.0.0.1:8661/app/v1"
 
 
+def in_agent(*hooks, platform=A.PLATFORM, child=False):
+    """Runs hooks as the agent thread of a turn would: with the session's context bound."""
+    from gateway.session_context import set_session_vars, clear_session_vars
+    from agent.delegation_context import delegated_child_context
+    tokens = set_session_vars(platform=platform, chat_id=A.CHAT_ID, session_key=f"agent:main:{platform}:dm:x",
+                              cron_session="")
+    try:
+        for hook in hooks:
+            if child:
+                with delegated_child_context("child"):
+                    hook()
+            else:
+                hook()
+    finally:
+        clear_session_vars(tokens)
+
+
+async def next_busy(ws, timeout=3.0):
+    while True:
+        event = json.loads(await asyncio.wait_for(ws.recv(), timeout))
+        if event["type"] == "busy":
+            return event["busy"]
+
+
+async def no_busy(ws, wait=.4):
+    try:
+        while True:
+            event = json.loads(await asyncio.wait_for(ws.recv(), wait))
+            assert event["type"] != "busy", event
+    except asyncio.TimeoutError:
+        pass
+
+
+async def check_busy(adapter, http, H):
+    turn = A.MessageEvent(text="сделай", message_type=A.MessageType.TEXT, source=adapter.build_source(
+        chat_id=A.CHAT_ID, chat_type="dm", user_id=A.USER_ID), message_id="")
+    await asyncio.sleep(.5)  # the echo turns above are over (the gateway runs one turn at a time)
+    async with websockets.connect(f"ws://127.0.0.1:8661/app/v1/ws?since={adapter.store.current_rev()}",
+                                  additional_headers=H) as ws:
+        assert await next_busy(ws) is False  # the current value right after connecting
+
+        # Thinking alone is not busy; the first tool call is, until the loop ends; the final reply stays quiet.
+        await adapter.on_processing_start(turn)
+        await no_busy(ws)
+        await asyncio.to_thread(in_agent, lambda: A._pre_tool_call("web_search", {"query": "x"}))
+        assert await next_busy(ws) is True
+        assert (await http.get(f"{BASE}/sync?since={adapter.store.current_rev()}", headers=H)).json()["busy"] is True
+        await asyncio.to_thread(in_agent, lambda: A._mark_working("web_search"), lambda: A._turn_done(platform=A.PLATFORM))
+        assert await next_busy(ws) is False
+        await adapter.send(A.CHAT_ID, "нашёл")
+        await adapter.on_processing_complete(turn, None)
+        await no_busy(ws)
+        assert (await http.get(f"{BASE}/sync?since={adapter.store.current_rev()}", headers=H)).json()["busy"] is False
+
+        # Other chats, subagents and a voice reply don't make the app busy.
+        await adapter.on_processing_start(turn)
+        await asyncio.to_thread(in_agent, lambda: A._mark_working("web_search"), platform="telegram")
+        await asyncio.to_thread(in_agent, lambda: A._mark_working("web_search"), child=True)
+        await asyncio.to_thread(in_agent, lambda: A._mark_working("text_to_speech"))
+        await no_busy(ws)
+
+        # "ща сделаю" mid-turn: busy from that message on; a failed turn drops it.
+        await adapter.send(A.CHAT_ID, "ща сделаю")
+        assert await next_busy(ws) is True
+        await adapter.on_processing_complete(turn, "failure")
+        assert await next_busy(ws) is False
+
+        # /stop mid-turn.
+        await adapter.on_processing_start(turn)
+        await asyncio.to_thread(in_agent, lambda: A._mark_working("terminal"))
+        assert await next_busy(ws) is True
+        A._turn_stopped(session_key="agent:main:morzik_app:dm:x", platform=A.PLATFORM)
+        assert await next_busy(ws) is False
+        await adapter.on_processing_complete(turn, "cancelled")
+
+        # A subagent running in the background for this chat: busy until it finishes; another chat's isn't.
+        from tools import async_delegation as D
+        with D._records_lock:
+            D._records["deleg_smoke_tg"] = {"delegation_id": "deleg_smoke_tg", "status": "running",
+                                            "session_key": "agent:main:telegram:dm:1", "goals": ["x"]}
+        await no_busy(ws)
+        with D._records_lock:
+            D._records["deleg_smoke"] = {"delegation_id": "deleg_smoke", "status": "running",
+                                         "session_key": "agent:main:morzik_app:dm:app", "goals": ["x"]}
+        try:
+            assert await next_busy(ws) is True
+            with D._records_lock:
+                D._records["deleg_smoke"]["status"] = "completed"
+            assert await next_busy(ws) is False
+        finally:
+            with D._records_lock:
+                D._records.pop("deleg_smoke", None)
+                D._records.pop("deleg_smoke_tg", None)
+
+
 async def main():
     tmp = tempfile.mkdtemp()
     adapter = A.MorzikAppAdapter(PlatformConfig(enabled=True, extra={"state_dir": tmp, "port": 8661}))
@@ -46,11 +142,13 @@ async def main():
         sent_codes.append(params["text"])
         return {}
     adapter._telegram = fake_telegram
-    A.MIN_PAUSE, A.MAX_PAUSE = .05, .1
+    A.MIN_PAUSE, A.MAX_PAUSE, A.BACKGROUND_TICK = .05, .1, .1
 
-    async def echo(event):
+    async def echo(event):  # a turn without tools: the loop ends (post_llm_call), then the reply goes out
         await adapter.on_processing_start(event)
+        adapter.mark_turn_done()
         await adapter.send(A.CHAT_ID, f"эхо: {event.text}\n\nвторая мысль")
+        await adapter.on_processing_complete(event, None)
         return None
     adapter.handle_message = echo  # the gateway's queueing is not under test here
     assert await adapter.connect()
@@ -80,6 +178,7 @@ async def main():
                     events.append(json.loads(await asyncio.wait_for(ws.recv(), 5)))
                 kinds = [e["type"] for e in events]
                 assert "typing" in kinds, kinds
+                assert not [e for e in events if e["type"] == "busy" and e["busy"]], events  # just talking
                 texts = [m["text"] for e in events if e["type"] == "messages" for m in e["messages"] if m["role"] == "morzik"]
                 assert texts == ["эхо: привет", "вторая мысль"], texts
                 statuses = [m["status"] for e in events if e["type"] == "messages" for m in e["messages"] if m["role"] == "user"]
@@ -110,6 +209,8 @@ async def main():
                     if ev["type"] == "messages":
                         seen += [m["rev"] for m in ev["messages"]]
                 assert seen == sorted(seen), seen
+
+            await check_busy(adapter, http, H)
 
             # A reply with a quote of a fragment: stored with the message.
             target, _ = adapter.store.add("morzik", "завтра в 10 созвон, в 15:30 стоматолог")

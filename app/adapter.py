@@ -13,13 +13,17 @@ The phone app talks to this adapter over HTTPS (Tailscale Funnel → 127.0.0.1:8
     POST /app/v1/read         {seq}                  read up to here (badge)
     POST /app/v1/action       {message_id, button_id}  tap on a reply button
     POST /app/v1/react        {message_id, emoji}    the user's reaction ("" takes it back)
-    GET  /app/v1/ws?since=REV                        live: missed changes first, then new ones, typing
+    GET  /app/v1/ws?since=REV                        live: missed changes first, then new ones, typing, busy
 
 Everything but pairing needs ``Authorization: Bearer <device token>``. See store.py for how sync works.
 
 Morzik behaves here as in Telegram (morzik-chat): a short reply goes out as several messages, "typing…"
 shows only right before each one, Hermes's own notices never reach the chat, a short "ща" goes out when he
 goes off to look something up silently. When no phone is connected, each message from Morzik is pushed.
+
+"busy" (on the socket and in /sync) says Morzik is working on something for the user: in a turn from his
+first tool call or a message sent mid-turn until the turn ends, and while background work he started from
+this chat (a process that reports on exit, an async subagent) is still running. Thinking alone is not busy.
 """
 
 import asyncio
@@ -71,6 +75,7 @@ CTX: list = [None]
 ORIGIN: list = [None]
 REACTION_NOTES: list = []
 REACTION_SETTLE = 2.0  # seconds to let the user settle on an emoji before Morzik answers
+BACKGROUND_TICK = 2.0  # how often background work from this chat is looked up for "busy"
 
 
 def _env(name: str, default: str = "") -> str:
@@ -129,6 +134,12 @@ class MorzikAppAdapter(BasePlatformAdapter):
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._send_lock = asyncio.Lock()
         self._typing_state: Optional[str] = None
+        # This turn: open (on_processing_start..complete), done (the agent loop has finished, only the final
+        # reply is left), working (a tool was called or a message went out mid-turn). Set from agent threads.
+        self._work = {"open": False, "done": False, "working": False}
+        self._background = False
+        self._busy = False
+        self._background_task: Optional[asyncio.Task] = None
 
     # --- lifecycle ---------------------------------------------------------------------------
 
@@ -165,6 +176,7 @@ class MorzikAppAdapter(BasePlatformAdapter):
         self._mark_connected()
         ACTIVE[0] = self
         self._wire_plugin_handlers(None)
+        self._background_task = asyncio.ensure_future(self._watch_background())
         logger.info("[%s] listening on %s:%s (push %s)", self.name, self.host, self.port,
                     "on" if self.apns.configured else "off")
         return True
@@ -173,6 +185,12 @@ class MorzikAppAdapter(BasePlatformAdapter):
         self._running = False
         if ACTIVE[0] is self:
             ACTIVE[0] = None
+        if self._background_task is not None:
+            self._background_task.cancel()
+            self._background_task = None
+        self._work.update(open=False, done=False, working=False)
+        self._background = False
+        await self._update_busy()
         for ws in list(self._sockets):
             try:
                 await ws.close()
@@ -255,6 +273,43 @@ class MorzikAppAdapter(BasePlatformAdapter):
         if state != self._typing_state:
             self._typing_state = state
             await self._broadcast({"type": "typing", "state": state})
+
+    # --- busy: Morzik is working on something for the user --------------------------------------------
+
+    async def _update_busy(self) -> None:
+        busy = bool(self._work["working"] or self._background)
+        if busy != self._busy:
+            self._busy = busy
+            await self._broadcast({"type": "busy", "busy": busy})
+
+    def _update_busy_threadsafe(self) -> None:
+        if self._loop is not None and self._loop.is_running():
+            asyncio.run_coroutine_threadsafe(self._update_busy(), self._loop)
+
+    def mark_working(self) -> None:
+        """A tool call or a mid-turn message: busy until the turn ends. Safe from any thread."""
+        work = self._work
+        if work["open"] and not work["done"] and not work["working"]:
+            work["working"] = True
+            self._update_busy_threadsafe()
+
+    def mark_turn_done(self) -> None:
+        """The agent loop has finished (or was stopped): the turn's work is over. Safe from any thread."""
+        self._work.update(done=True, working=False)
+        self._update_busy_threadsafe()
+
+    async def _watch_background(self) -> None:
+        while True:
+            try:
+                background = await asyncio.to_thread(_background_work)
+                if background != self._background:
+                    self._background = background
+                    await self._update_busy()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.debug("[%s] background work not checked: %s", self.name, exc)
+            await asyncio.sleep(BACKGROUND_TICK)
 
     # --- push -------------------------------------------------------------------------------------
 
@@ -349,6 +404,7 @@ class MorzikAppAdapter(BasePlatformAdapter):
             return self._error(400, "bad_since")
         data = self._changes(since)
         data["typing"] = self._typing_state
+        data["busy"] = self._busy
         return self._json(data)
 
     async def _history(self, request):
@@ -560,6 +616,7 @@ class MorzikAppAdapter(BasePlatformAdapter):
                     break
                 since = data["rev"]
             await ws.send_str(json.dumps({"type": "typing", "state": self._typing_state}))
+            await ws.send_str(json.dumps({"type": "busy", "busy": self._busy}))
             async for msg in ws:
                 if msg.type != WSMsgType.TEXT:
                     if msg.type in (WSMsgType.ERROR, WSMsgType.CLOSE):
@@ -635,11 +692,16 @@ class MorzikAppAdapter(BasePlatformAdapter):
 
     async def on_processing_start(self, event: MessageEvent) -> None:
         """Morzik took the message: it and everything before it turn "read"."""
+        self._work.update(open=True, done=False, working=False)
+        await self._update_busy()
         message = self.store.get(str(event.message_id or "")) if self.store else None
         if message:
             await self._publish(self.store.mark_read_until(int(message["seq"])))
 
     async def on_processing_complete(self, event, outcome) -> None:
+        # Any outcome (success, failure, cancel): the turn is over and so is its "busy".
+        self._work.update(open=False, done=False, working=False)
+        await self._update_busy()
         await self._set_typing(None)
 
     # --- outbound: Morzik talks --------------------------------------------------------------------
@@ -698,6 +760,7 @@ class MorzikAppAdapter(BasePlatformAdapter):
         message, _ = self.store.add("morzik", text, media=media, buttons=buttons)
         await self._set_typing(None)
         await self._publish([message], push=True)
+        self.mark_working()  # a message mid-turn ("ща", "ща сделаю"): he goes on working
         return SendResult(success=True, message_id=message["id"])
 
     async def send(self, chat_id: str, content: str, reply_to: Optional[str] = None,
@@ -893,9 +956,70 @@ def _to_app(value, origin_platform: str):
     return ",".join(out) if changed else None
 
 
+def _app_turn() -> bool:
+    """Is this hook running for Morzik's own turn in the app (not a subagent, a cron run or another chat)?"""
+    try:
+        from gateway.session_context import get_session_env
+        if get_session_env("HERMES_SESSION_PLATFORM").strip().lower() != PLATFORM or get_session_env("HERMES_CRON_SESSION"):
+            return False
+        from agent.delegation_context import is_delegated_child_context
+        return not is_delegated_child_context()
+    except Exception:
+        return False
+
+
+def _mark_working(tool_name="", **kwargs):
+    # A voice reply is Morzik talking, not working (as in morzik-chat).
+    adapter = ACTIVE[0]
+    if adapter is not None and tool_name != "text_to_speech" and _app_turn():
+        adapter.mark_working()
+    return None
+
+
+def _turn_done(**kwargs):
+    """post_llm_call: the tool loop is over, only the final reply is left (it shows "typing")."""
+    adapter = ACTIVE[0]
+    if adapter is not None and _app_turn():
+        adapter.mark_turn_done()
+    return None
+
+
+def _turn_stopped(platform="", **kwargs):
+    """agent_loop_stopped (/stop, /new mid-turn): fired by the gateway, outside the agent's context."""
+    adapter = ACTIVE[0]
+    if adapter is not None and str(platform or "").lower() == PLATFORM:
+        adapter.mark_turn_done()
+    return None
+
+
+def _background_work() -> bool:
+    """Is background work started from the app chat still running, work that reports back here when done:
+    a process with notify_on_complete, an async subagent? Both registries live in this process (none survive
+    a restart as running)."""
+    def ours(key) -> bool:
+        return f":{PLATFORM}:" in str(key or "")
+    try:
+        from tools.process_registry import process_registry
+        if process_registry._any_running(lambda p: p.notify_on_complete and ours(p.session_key)):
+            return True
+    except Exception as exc:
+        logger.debug("morzik-app: processes not checked: %s", exc)
+    try:
+        from tools.async_delegation import _LIVE_STATES, list_async_delegations
+        if any(r.get("status") in _LIVE_STATES and ours(r.get("session_key")) for r in list_async_delegations()):
+            return True
+    except Exception as exc:
+        logger.debug("morzik-app: subagents not checked: %s", exc)
+    return False
+
+
 def _pre_tool_call(tool_name="", args=None, **kwargs):
     """Since 26.10.2026 all of Morzik's own messages go to the app, not Telegram: reminders and scheduled
     jobs he sets up (even from a Telegram chat or a cron run), their failure notices, and send_message."""
+    try:
+        _mark_working(tool_name)
+    except Exception:
+        pass
     if not isinstance(args, dict):
         return None
     try:
@@ -929,6 +1053,9 @@ def register(ctx) -> None:
     if hasattr(ctx, "register_hook"):
         ctx.register_hook("pre_llm_call", _pre_llm_call)
         ctx.register_hook("pre_tool_call", _pre_tool_call)
+        ctx.register_hook("post_tool_call", _mark_working)
+        ctx.register_hook("post_llm_call", _turn_done)
+        ctx.register_hook("agent_loop_stopped", _turn_stopped)
     kwargs = dict(
         name=PLATFORM, label="Morzik App", adapter_factory=lambda cfg: MorzikAppAdapter(cfg),
         check_fn=check_requirements, validate_config=validate_config, is_connected=is_connected,
