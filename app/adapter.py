@@ -137,7 +137,7 @@ class MorzikAppAdapter(BasePlatformAdapter):
                          _env("MORZIK_APP_APNS_TOPIC", "com.sketchpiece.morzik"))
         self.bot_token = _env("TELEGRAM_BOT_TOKEN")
         self.owner_chat = _env("TELEGRAM_HOME_CHANNEL")
-        self._sockets: dict = {}  # ws -> {"device": id, "seen": monotonic}
+        self._sockets: dict = {}  # ws -> {"device": id, "name": device name, "seen": monotonic}
         self._runner = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._send_lock = asyncio.Lock()
@@ -243,16 +243,20 @@ class MorzikAppAdapter(BasePlatformAdapter):
         now = time.monotonic()
         return {info["device"] for ws, info in self._sockets.items() if not ws.closed and now - info["seen"] < LIVE_FOR}
 
-    async def _broadcast(self, event: dict) -> None:
+    async def _broadcast(self, event: dict) -> list:
+        """Sends the event to every open socket; returns the names of the devices it went to."""
         data = json.dumps(event, ensure_ascii=False)
+        sent = []
         for ws in list(self._sockets):
             if ws.closed:
                 self._sockets.pop(ws, None)
                 continue
             try:
                 await ws.send_str(data)
+                sent.append(self._sockets[ws]["name"])
             except Exception:
                 self._sockets.pop(ws, None)
+        return sent
 
     async def _publish(self, messages: list, push: bool = False) -> None:
         """Sends every stored change the phones haven't had yet, read back from the database in revision order.
@@ -289,9 +293,10 @@ class MorzikAppAdapter(BasePlatformAdapter):
         busy = bool(self._work["working"] or self._background)
         if busy != self._busy:
             self._busy = busy
-            await self._broadcast({"type": "busy", "busy": busy})
-            logger.info("morzik-app: busy %s (%s), sent to %d socket(s)", "true" if busy else "false", reason,
-                        len(self._sockets))
+            sent = await self._broadcast({"type": "busy", "busy": busy})
+            # WARNING: the gateway's journal shows only warnings and up, and busy is what we look for there.
+            logger.warning("morzik-app: busy %s (%s), sent to %s", "true" if busy else "false", reason,
+                           ", ".join(sent) or "no socket")
 
     def _update_busy_threadsafe(self, reason: str) -> None:
         if self._loop is not None and self._loop.is_running():
@@ -635,7 +640,8 @@ class MorzikAppAdapter(BasePlatformAdapter):
         ws = web.WebSocketResponse(heartbeat=20, max_msg_size=1 << 20)
         await ws.prepare(request)
         # Registered before the backlog is read: nothing stored meanwhile can slip between the two.
-        self._sockets[ws] = {"device": device["id"], "seen": time.monotonic()}
+        self._sockets[ws] = {"device": device["id"], "name": device.get("name") or device["id"][:8],
+                             "seen": time.monotonic()}
         try:
             since = int(request.query.get("since", "0"))
         except ValueError:
@@ -649,6 +655,8 @@ class MorzikAppAdapter(BasePlatformAdapter):
                 since = data["rev"]
             await ws.send_str(json.dumps({"type": "typing", "state": self._typing_state}))
             await ws.send_str(json.dumps({"type": "busy", "busy": self._busy}))
+            logger.warning("morzik-app: socket open: %s, busy %s", self._sockets[ws]["name"],
+                           "true" if self._busy else "false")
             async for msg in ws:
                 if msg.type != WSMsgType.TEXT:
                     if msg.type in (WSMsgType.ERROR, WSMsgType.CLOSE):
@@ -669,6 +677,7 @@ class MorzikAppAdapter(BasePlatformAdapter):
                         pass
         finally:
             self._sockets.pop(ws, None)
+            logger.warning("morzik-app: socket closed: %s", device.get("name") or device["id"][:8])
         return ws
 
     # --- inbound: the user's message goes to Morzik ------------------------------------------------
