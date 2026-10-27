@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS messages (
   role TEXT NOT NULL,               -- 'user' | 'morzik'
   text TEXT NOT NULL DEFAULT '',
   media TEXT,                       -- JSON: {id, kind, mime, name, size, duration, width, height, url}
-  buttons TEXT,                     -- JSON list: {id, title, kind: 'login'|'url'|'reply', value}
+  buttons TEXT,                     -- JSON list: {id, title, kind: 'login'|'url'|'reply'|'approval', value}
   status TEXT NOT NULL DEFAULT 'sent',  -- user messages: 'sent' | 'read'
   deleted INTEGER NOT NULL DEFAULT 0,
   created REAL NOT NULL,

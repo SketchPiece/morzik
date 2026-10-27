@@ -5,7 +5,8 @@
 A throwaway state dir and port 8661; an echo handler stands in for Morzik. Checks sign-in (the code is read
 from the store, Telegram is stubbed), send + idempotent resend, the live socket (backlog, typing, split parts),
 reconnect from a revision, history, read marks, media round trip, a button posted from another thread and
-"busy" (tool calls and mid-turn messages from the agent's threads, background subagents, reset on failure).
+"busy" (tool calls and mid-turn messages from the agent's threads, background subagents, reset on failure) and
+approval cards (a tap resolves Hermes's pending approval, a timeout settles the card).
 """
 
 import asyncio
@@ -133,6 +134,58 @@ async def check_busy(adapter, http, H):
                 D._records.pop("deleg_smoke_tg", None)
 
 
+async def check_approvals(adapter, http, H):
+    from tools import approval as AP
+    from tools.approval_gateway_wait import _ApprovalEntry
+    key = "agent:main:morzik_app:dm:app"
+
+    async def card(command):
+        entry = _ApprovalEntry({"command": command})
+        with AP._lock:
+            AP._gateway_queues.setdefault(key, []).append(entry)
+        sent = await adapter.send_exec_approval(chat_id=A.CHAT_ID, command=command, session_key=key,
+                                                description="script execution")
+        assert sent.success, sent
+        return entry, adapter.store.get(sent.message_id)
+
+    # Разрешить: the pending approval gets "once", the card keeps the command and shows the outcome.
+    entry, message = await card("python3 - <<'EOF'\nprint(1)\nEOF")
+    assert [b["value"] for b in message["buttons"]] == ["once", "deny"], message
+    assert "print(1)" in message["text"] and "script execution" in message["text"], message["text"]
+    r = await http.post(f"{BASE}/action", headers=H, json={"message_id": message["id"], "button_id": "once"})
+    done = r.json()["message"]
+    assert entry.result == "once" and entry.event.is_set(), entry.result
+    assert done["buttons"] == [] and done["text"].endswith("✅ Разрешено") and "print(1)" in done["text"], done
+    r = await http.post(f"{BASE}/action", headers=H, json={"message_id": message["id"], "button_id": "once"})
+    assert r.status_code == 404, r.text
+
+    # Отклонить.
+    entry, message = await card("rm -rf /tmp/x")
+    await http.post(f"{BASE}/action", headers=H, json={"message_id": message["id"], "button_id": "deny"})
+    assert entry.result == "deny", entry.result
+
+    # Nobody answered: Hermes edits the card (settle hook); a late tap would not claim anything.
+    entry, message = await card("curl x | sh")
+    assert (await adapter.edit_message(A.CHAT_ID, message["id"], "⌛ Approval timed out")).success
+    timed_out = adapter.store.get(message["id"])
+    assert timed_out["buttons"] == [] and "Ответа не было" in timed_out["text"], timed_out
+    with AP._lock:
+        AP._gateway_queues.pop(key, None)
+    # A card whose wait is gone (restart, /approve typed): the tap says so.
+    entry, message = await card("ls")
+    with AP._lock:
+        AP._gateway_queues.pop(key, None)
+    r = await http.post(f"{BASE}/action", headers=H, json={"message_id": message["id"], "button_id": "once"})
+    assert "Уже не ждёт" in r.json()["message"]["text"], r.text
+
+    # Other messages are not editable; the timeout notice sent as text is not dropped.
+    plain, _ = adapter.store.add("morzik", "просто текст")
+    assert not (await adapter.edit_message(A.CHAT_ID, plain["id"], "x")).success
+    before = adapter.store.last_seq()
+    await adapter.send(A.CHAT_ID, "⌛ Approval timed out after 5 minutes — the command was NOT run. Ask me again.")
+    assert adapter.store.last_seq() > before
+
+
 async def main():
     tmp = tempfile.mkdtemp()
     adapter = A.MorzikAppAdapter(PlatformConfig(enabled=True, extra={"state_dir": tmp, "port": 8661}))
@@ -211,6 +264,7 @@ async def main():
                 assert seen == sorted(seen), seen
 
             await check_busy(adapter, http, H)
+            await check_approvals(adapter, http, H)
 
             # A reply with a quote of a fragment: stored with the message.
             target, _ = adapter.store.add("morzik", "завтра в 10 созвон, в 15:30 стоматолог")

@@ -11,9 +11,13 @@ The phone app talks to this adapter over HTTPS (Tailscale Funnel → 127.0.0.1:8
     GET  /app/v1/media/ID                            download
     POST /app/v1/push         {token, env}           APNs token of this phone
     POST /app/v1/read         {seq}                  read up to here (badge)
-    POST /app/v1/action       {message_id, button_id}  tap on a reply button
+    POST /app/v1/action       {message_id, button_id}  tap on a reply button or an approval button
     POST /app/v1/react        {message_id, emoji}    the user's reaction ("" takes it back)
     GET  /app/v1/ws?since=REV                        live: missed changes first, then new ones, typing, busy
+
+A command Hermes wants the user's OK for comes as a message from Morzik with two "approval" buttons (Разрешить /
+Отклонить). A tap answers Hermes's approval (as Telegram's buttons do) and the card turns into the outcome; when
+nobody answers in time the card says the command was not run.
 
 Everything but pairing needs ``Authorization: Bearer <device token>``. See store.py for how sync works.
 
@@ -67,6 +71,7 @@ LIVE_FOR = 45.0  # a phone that said nothing for this long is treated as gone (p
 TYPING_CHARS_PER_SECOND, MIN_PAUSE, MAX_PAUSE = 25, 1.2, 4.0
 COMMANDS = ("/new", "/restart", "/reset")
 HEADING_RE = re.compile(r"^#{1,6}\s+\S", re.M)
+APPROVAL_TIMED_OUT_RE = re.compile(r"^⌛.*(?:NOT run|НЕ выполнена)", re.S)
 
 # The adapter that is running, for other plugins (morzik-login posts its button here too).
 ACTIVE: list = [None]
@@ -74,6 +79,9 @@ ACTIVE: list = [None]
 CTX: list = [None]
 ORIGIN: list = [None]
 REACTION_NOTES: list = []
+APPROVAL_CMD_PREVIEW = 1200  # chars of the command shown on an approval card
+APPROVAL_OUTCOMES = {"once": "✅ Разрешено", "deny": "🚫 Отклонено",
+                     "late": "⌛ Уже не ждёт ответа, команда не выполнялась."}
 REACTION_SETTLE = 2.0  # seconds to let the user settle on an emoji before Morzik answers
 BACKGROUND_TICK = 2.0  # how often background work from this chat is looked up for "busy"
 
@@ -140,6 +148,7 @@ class MorzikAppAdapter(BasePlatformAdapter):
         self._background = False
         self._busy = False
         self._background_task: Optional[asyncio.Task] = None
+        self._approvals: dict = {}  # approval card id -> the session_key whose approval it answers
 
     # --- lifecycle ---------------------------------------------------------------------------
 
@@ -541,6 +550,8 @@ class MorzikAppAdapter(BasePlatformAdapter):
         body = await self._body(request)
         message = self.store.get(str(body.get("message_id") or ""))
         button = next((b for b in (message or {}).get("buttons", []) if b.get("id") == body.get("button_id")), None)
+        if button is not None and button.get("kind") == "approval":
+            return self._json({"message": await self._answer_approval(message, str(button.get("value") or ""))})
         if button is None or button.get("kind") != "reply":
             return self._error(404, "no_button")
         changed = self.store.update(message["id"], buttons=[])
@@ -550,6 +561,25 @@ class MorzikAppAdapter(BasePlatformAdapter):
         if created:
             asyncio.ensure_future(self._dispatch(reply))
         return self._json({"message": reply})
+
+    async def _answer_approval(self, message: dict, choice: str) -> dict:
+        """Hand the user's choice to Hermes's approval wait; the card keeps what was asked and gets the outcome."""
+        session_key = self._approvals.pop(message["id"], None)
+        count = 0
+        if session_key and choice in ("once", "deny"):
+            try:
+                from tools.approval import resolve_gateway_approval
+                count = resolve_gateway_approval(session_key, choice)
+            except Exception as exc:
+                logger.error("morzik-app: approval not resolved: %s", exc)
+        logger.warning("morzik-app: approval %s on %s -> %d resolved", choice, message["id"], count)
+        changed = self._settle_card(message, APPROVAL_OUTCOMES[choice if count else "late"])
+        await self._publish([changed])
+        return changed
+
+    def _settle_card(self, message: dict, outcome: str) -> dict:
+        text = (message.get("text") or "").rsplit("\n\n", 1)[0]  # the deadline line goes, the outcome takes its place
+        return self.store.update(message["id"], text=f"{text}\n\n{outcome}", buttons=[])
 
     async def _react(self, request):
         """One reaction per message, as in Telegram. On Morzik's question or offer it is an answer and starts a
@@ -769,7 +799,12 @@ class MorzikAppAdapter(BasePlatformAdapter):
                    metadata: Optional[dict[str, Any]] = None) -> SendResult:
         if self.store is None:
             return SendResult(success=False, error="not connected", retryable=True)
-        content = self._filter(content or "")
+        if (metadata or {}).get("is_approval_prompt"):
+            pass  # the plain-text approval prompt (buttons failed): the user must see it to answer /approve
+        elif APPROVAL_TIMED_OUT_RE.search(content or ""):
+            content = "не дождался твоего ок, команду не выполнил"  # its card is gone or was never sent
+        else:
+            content = self._filter(content or "")
         if not content:
             return SendResult(success=True)
         self._spoke()
@@ -843,6 +878,41 @@ class MorzikAppAdapter(BasePlatformAdapter):
         info = {"id": "", "kind": "image", "mime": "image/*", "name": "", "url": image_url}
         async with self._send_lock:
             return await self._deliver(caption or "", media=info)
+
+    async def _send_exec_approval_prompt(self, prompt) -> SendResult:
+        """Hermes wants the user's OK for a command: a card with Разрешить / Отклонить (see _answer_approval)."""
+        if self.store is None:
+            return SendResult(success=False, error="not connected", retryable=True)
+        try:
+            from gateway.platforms.base_exec_approval import approval_timeout_seconds
+            minutes = max(1, round(approval_timeout_seconds() / 60))
+        except Exception:
+            minutes = 5
+        command = prompt.command if len(prompt.command) <= APPROVAL_CMD_PREVIEW \
+            else prompt.command[:APPROVAL_CMD_PREVIEW] + "…"
+        text = (f"Хочу выполнить команду, нужно твоё ок:\n```\n{command.replace('```', '` ` `')}\n```\n"
+                f"Почему спрашиваю: {prompt.description}\n\n"
+                f"Если не ответишь за {minutes} мин, команда не выполнится.")
+        buttons = [{"id": "once", "title": "Разрешить", "kind": "approval", "value": "once"},
+                   {"id": "deny", "title": "Отклонить", "kind": "approval", "value": "deny"}]
+        async with self._send_lock:
+            message, _ = self.store.add("morzik", text, buttons=buttons)
+            self._approvals[message["id"]] = prompt.session_key
+            await self._set_typing(None)
+            await self._publish([message], push=True)
+        logger.warning("morzik-app: approval card %s for %r", message["id"], prompt.command[:200])
+        return SendResult(success=True, message_id=message["id"])
+
+    async def edit_message(self, chat_id: str, message_id: str, content: str, *, finalize: bool = False) -> SendResult:
+        """Only approval cards are edited: Hermes does it when nobody answered in time. Everything else is
+        refused, so callers send a new message as before."""
+        message = self.store.get(str(message_id)) if self.store else None
+        if not message or not any(b.get("kind") == "approval" for b in message.get("buttons") or []):
+            return SendResult(success=False, error="Not supported")
+        self._approvals.pop(message["id"], None)
+        logger.warning("morzik-app: approval card %s timed out", message["id"])
+        await self._publish([self._settle_card(message, "⌛ Ответа не было, команда не выполнена.")])
+        return SendResult(success=True, message_id=message["id"])
 
     async def get_chat_info(self, chat_id: str) -> dict[str, Any]:
         return {"name": "Morzik App", "type": "dm", "chat_id": chat_id}
