@@ -287,6 +287,7 @@ def snapshot(hermes_home: pathlib.Path, now: datetime.datetime | None = None,
     return {
         "memory": memory or "(пусто)",
         "recent": recent_messages(hermes_home / "state.db") or "(давно не переписывались)",
+        "calls": recent_calls(hermes_home) or "(за сутки не созванивались)",
         "now": spoken_time(now),
         **_gather(sources or {}, timeout),
     }
@@ -404,6 +405,41 @@ def log_call(hermes_home: pathlib.Path, conversation_id: str, transcript: str, s
         tmp.write_text("\n".join(kept) + "\n", encoding="utf-8")
         tmp.chmod(0o600)
         tmp.replace(path)
+
+
+# What the agent says aloud but a reader does not need: audio tags and the tool marker.
+SPOKEN_TAGS = re.compile(r"\[(?:[a-z_ ]+|perform_task)\]\s*")
+
+
+def recent_calls(hermes_home: pathlib.Path, max_age: float = 86400, max_calls: int = 2,
+                 max_chars: int = 1500, now: float | None = None) -> str:
+    """The last calls of the day from CALLS_LOG, for the next call: so a second call remembers the first.
+
+    A long call keeps its start (what it was about) and its end (where it stopped)."""
+    now = time.time() if now is None else now
+    calls = []
+    try:
+        for line in (pathlib.Path(hermes_home) / CALLS_LOG).read_text(encoding="utf-8").splitlines():
+            try:
+                call = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(call, dict) and call.get("transcript") and float(call.get("ended") or 0) >= now - max_age:
+                calls.append(call)
+    except OSError:
+        return ""
+    calls = sorted(calls, key=lambda c: float(c.get("started") or 0))[-max_calls:]
+    budget = max_chars // max(1, len(calls))
+    parts = []
+    for call in calls:
+        text = SPOKEN_TAGS.sub("", str(call["transcript"]))
+        if len(text) > budget:
+            head = budget // 3
+            text = text[:head].rstrip() + "\n…\n" + text[-(budget - head):].lstrip()
+        start = datetime.datetime.fromtimestamp(float(call.get("started") or call.get("ended")))
+        minutes = round(float(call.get("duration") or 0) / 60)
+        parts.append(f"Звонок {_day(start)} в {start:%H:%M}" + (f", {minutes} мин" if minutes else "") + f":\n{text}")
+    return "\n\n".join(parts)
 
 
 class CallSessions:

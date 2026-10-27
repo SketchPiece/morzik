@@ -140,6 +140,23 @@ class BrainTest(unittest.TestCase):
         self.assertEqual(snap["recent"], "(давно не переписывались)")
         self.assertEqual(snap["now"], "пятница, 23 октября 2026, 17:05")
 
+    def test_recent_calls(self):
+        now = datetime.datetime(2026, 10, 26, 20, 0).timestamp()
+        with tempfile.TemporaryDirectory() as tmp:
+            home = pathlib.Path(tmp)
+            self.assertEqual(brain.recent_calls(home, now=now), "")
+            brain.log_call(home, "old", "Пользователь: вчерашнее", duration=60, now=now - 2 * 86400)
+            brain.log_call(home, "c1", "Морзик: [smugly] Слушаю.\nПользователь: купи молока", duration=120,
+                           now=now - 3600)
+            brain.log_call(home, "c2", "Пользователь: " + "а" * 3000, duration=30, now=now - 60)
+            text = brain.recent_calls(home, now=now, max_chars=1000)
+        first, second = text.split("\n\n")
+        self.assertEqual(first, "Звонок понедельник, 26 октября в 18:58, 2 мин:\nМорзик: Слушаю.\nПользователь: купи молока")
+        self.assertTrue(second.startswith("Звонок понедельник, 26 октября в 19:58:\nПользователь: ааа"))
+        self.assertIn("\n…\n", second)
+        self.assertLess(len(second), 600)
+        self.assertNotIn("вчерашнее", text)
+
     def test_calendar_text(self):
         text = brain.calendar_text([
             {"title": "Планёрка", "all_day": False, "location": None,
