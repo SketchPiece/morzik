@@ -146,7 +146,7 @@ async def main():
 
     async def echo(event):  # a turn without tools: the loop ends (post_llm_call), then the reply goes out
         await adapter.on_processing_start(event)
-        adapter.mark_turn_done()
+        adapter.mark_turn_done("test")
         await adapter.send(A.CHAT_ID, f"эхо: {event.text}\n\nвторая мысль")
         await adapter.on_processing_complete(event, None)
         return None

@@ -190,7 +190,7 @@ class MorzikAppAdapter(BasePlatformAdapter):
             self._background_task = None
         self._work.update(open=False, done=False, working=False)
         self._background = False
-        await self._update_busy()
+        await self._update_busy("disconnect")
         for ws in list(self._sockets):
             try:
                 await ws.close()
@@ -276,27 +276,29 @@ class MorzikAppAdapter(BasePlatformAdapter):
 
     # --- busy: Morzik is working on something for the user --------------------------------------------
 
-    async def _update_busy(self) -> None:
+    async def _update_busy(self, reason: str) -> None:
         busy = bool(self._work["working"] or self._background)
         if busy != self._busy:
             self._busy = busy
             await self._broadcast({"type": "busy", "busy": busy})
+            logger.info("morzik-app: busy %s (%s), sent to %d socket(s)", "true" if busy else "false", reason,
+                        len(self._sockets))
 
-    def _update_busy_threadsafe(self) -> None:
+    def _update_busy_threadsafe(self, reason: str) -> None:
         if self._loop is not None and self._loop.is_running():
-            asyncio.run_coroutine_threadsafe(self._update_busy(), self._loop)
+            asyncio.run_coroutine_threadsafe(self._update_busy(reason), self._loop)
 
-    def mark_working(self) -> None:
+    def mark_working(self, reason: str) -> None:
         """A tool call or a mid-turn message: busy until the turn ends. Safe from any thread."""
         work = self._work
         if work["open"] and not work["done"] and not work["working"]:
             work["working"] = True
-            self._update_busy_threadsafe()
+            self._update_busy_threadsafe(reason)
 
-    def mark_turn_done(self) -> None:
+    def mark_turn_done(self, reason: str) -> None:
         """The agent loop has finished (or was stopped): the turn's work is over. Safe from any thread."""
         self._work.update(done=True, working=False)
-        self._update_busy_threadsafe()
+        self._update_busy_threadsafe(reason)
 
     async def _watch_background(self) -> None:
         while True:
@@ -304,7 +306,7 @@ class MorzikAppAdapter(BasePlatformAdapter):
                 background = await asyncio.to_thread(_background_work)
                 if background != self._background:
                     self._background = background
-                    await self._update_busy()
+                    await self._update_busy("background work " + ("running" if background else "over"))
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -693,7 +695,7 @@ class MorzikAppAdapter(BasePlatformAdapter):
     async def on_processing_start(self, event: MessageEvent) -> None:
         """Morzik took the message: it and everything before it turn "read"."""
         self._work.update(open=True, done=False, working=False)
-        await self._update_busy()
+        await self._update_busy("turn started")
         message = self.store.get(str(event.message_id or "")) if self.store else None
         if message:
             await self._publish(self.store.mark_read_until(int(message["seq"])))
@@ -701,7 +703,7 @@ class MorzikAppAdapter(BasePlatformAdapter):
     async def on_processing_complete(self, event, outcome) -> None:
         # Any outcome (success, failure, cancel): the turn is over and so is its "busy".
         self._work.update(open=False, done=False, working=False)
-        await self._update_busy()
+        await self._update_busy(f"turn over: {getattr(outcome, 'value', outcome)}")
         await self._set_typing(None)
 
     # --- outbound: Morzik talks --------------------------------------------------------------------
@@ -760,7 +762,7 @@ class MorzikAppAdapter(BasePlatformAdapter):
         message, _ = self.store.add("morzik", text, media=media, buttons=buttons)
         await self._set_typing(None)
         await self._publish([message], push=True)
-        self.mark_working()  # a message mid-turn ("ща", "ща сделаю"): he goes on working
+        self.mark_working("sent mid-turn")  # a message mid-turn ("ща", "ща сделаю"): he goes on working
         return SendResult(success=True, message_id=message["id"])
 
     async def send(self, chat_id: str, content: str, reply_to: Optional[str] = None,
@@ -972,7 +974,7 @@ def _mark_working(tool_name="", **kwargs):
     # A voice reply is Morzik talking, not working (as in morzik-chat).
     adapter = ACTIVE[0]
     if adapter is not None and tool_name != "text_to_speech" and _app_turn():
-        adapter.mark_working()
+        adapter.mark_working(f"tool {tool_name}")
     return None
 
 
@@ -980,7 +982,7 @@ def _turn_done(**kwargs):
     """post_llm_call: the tool loop is over, only the final reply is left (it shows "typing")."""
     adapter = ACTIVE[0]
     if adapter is not None and _app_turn():
-        adapter.mark_turn_done()
+        adapter.mark_turn_done("agent loop over")
     return None
 
 
@@ -988,7 +990,7 @@ def _turn_stopped(platform="", **kwargs):
     """agent_loop_stopped (/stop, /new mid-turn): fired by the gateway, outside the agent's context."""
     adapter = ACTIVE[0]
     if adapter is not None and str(platform or "").lower() == PLATFORM:
-        adapter.mark_turn_done()
+        adapter.mark_turn_done("agent stopped")
     return None
 
 
