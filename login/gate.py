@@ -21,7 +21,10 @@ Routes:
 - POST /login/session {initData, deviceKey, request} — the VNC password, a one-time websocket ticket
   (60 s) and a session id for /login/done;
 - POST /login/done {initData, session, outcome} — "done" or "cancel", seen by Morzik's request_login tool;
-- GET /login/ws?ticket=… — websocket to the screen, proxied as is to websockify.
+- GET /login/ws?ticket=… — websocket to the screen, proxied as is to websockify;
+- POST /login/screen {initData, session, width, height, visible, dpr, device} — from a phone or a tablet:
+  Morzik's screen and Chrome take the device's shape for the session (PhoneScreen);
+- GET /login/events?session=… — server-sent events for that page: a field on the screen got or lost the focus.
 
 Login requests are files in ~/.morzik-login/requests/<id>.json, created by the morzik-login Hermes plugin.
 Settings: environment, falling back to ~/.hermes/.env. Standard library only.
@@ -409,11 +412,17 @@ class Cdp:
 
 
 # Runs in every frame of the pages on the phone's screen: tells the gate which field has the focus, so the
-# phone opens its keyboard with the right layout. Only from the tab on screen; pagehide drops the keyboard.
+# phone opens its keyboard with the right layout. Only from the tab on screen, and "lost" only from a document
+# that reported a field (a background tab reloading must not close the keyboard); pagehide drops the keyboard.
 FOCUS_SCRIPT = r"""(() => {
   if (window.__morzikFocusWatch) return;
   window.__morzikFocusWatch = true;
-  const send = data => { try { window.__morzikLogin(JSON.stringify(data)); } catch (e) {} };
+  let reported = false;
+  const send = data => {
+    if (!data.focus && !reported) return;
+    reported = !!data.focus;
+    try { window.__morzikLogin(JSON.stringify(data)); } catch (e) {}
+  };
   const skip = /^(button|checkbox|radio|submit|reset|range|color|file|image|hidden)$/;
   const field = el => !el ? null : el.tagName === 'TEXTAREA' ? el
     : el.tagName === 'INPUT' ? (skip.test(el.type) || el.readOnly || el.disabled ? null : el)
