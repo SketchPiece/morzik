@@ -48,8 +48,32 @@ SCHEMA = {
 }
 
 
+def _show_tab(url: str, task_id) -> bool:
+    """The tab Morzik works in (on ``url`` when given), in front: the user logs in where Morzik will go on.
+
+    Goes through browser_exec, so browser_harness stays attached to that very tab."""
+    try:
+        from tools.registry import registry
+    except Exception:
+        return False
+    code = "# Показываю вкладку для входа\n"
+    if url:
+        code += f"new_tab({json.dumps(url)})\n"
+    code += "activate_tab(current_tab())\n"
+    try:
+        result = registry.dispatch("browser_exec", {"code": code}, task_id=task_id)
+        result = json.loads(result) if isinstance(result, str) else result
+    except Exception as exc:
+        logger.warning("morzik-login: browser_exec could not show the tab: %s", exc)
+        return False
+    if not (isinstance(result, dict) and result.get("success")):
+        logger.warning("morzik-login: browser_exec could not show the tab: %s", str(result)[:300])
+        return False
+    return True
+
+
 def _open_tab(url: str) -> None:
-    """A new tab in front, on the page to log in to."""
+    """A new tab in front, on the page to log in to (when browser_exec is not there)."""
     quoted = urllib.parse.quote(url, safe=":/?&=%#+@,;~")
     request = urllib.request.Request(f"{CDP}/json/new?{quoted}", method="PUT")
     with urllib.request.urlopen(request, timeout=10) as resp:
@@ -110,7 +134,6 @@ def _cleanup(requests: pathlib.Path) -> None:
 
 
 def _request_login(params, **kwargs):
-    del kwargs
     site, url = str(params.get("site") or "").strip()[:40], str(params.get("url") or "").strip()
     message = str(params.get("message") or "").strip() or f"нужно войти в {site}"
     if not site or (url and not url.startswith(("https://", "http://"))):
@@ -119,7 +142,7 @@ def _request_login(params, **kwargs):
     requests.mkdir(parents=True, exist_ok=True, mode=0o700)
     _cleanup(requests)
     try:
-        if url:
+        if not _show_tab(url, kwargs.get("task_id")) and url:
             _open_tab(url)
     except (OSError, ValueError, KeyError) as exc:
         return json.dumps({"success": False, "error": f"could not open the page in Chrome: {exc}"})
