@@ -9,15 +9,20 @@
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0 }
   html, body { height: 100%; background: #10172C; color: #fff; font-family: Inter, system-ui, sans-serif; -webkit-font-smoothing: antialiased; overflow: hidden }
+  /* The body follows the visible part of the page (visualViewport): with the keyboard up it gets shorter. */
   body {
+    position: fixed; left: 0; right: 0; top: var(--vv-top, 0px); height: var(--vv-height, 100%);
     display: flex; flex-direction: column;
     padding: calc(8px + var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px)) 0 calc(8px + var(--tg-safe-area-inset-bottom, 0px) + var(--tg-content-safe-area-inset-bottom, 0px));
   }
   header { padding: 8px 16px 10px; text-align: center }
   h1 { font-size: 17px; font-weight: 600 }
   #status { margin-top: 4px; font-size: 14px; color: #b9c3e6; min-height: 1.4em }
-  #screen { flex: 1; min-height: 0; position: relative; background: #0a0f1f }
-  #screen > div { background: #0a0f1f !important }
+  #screen { flex: 1; min-height: 0; position: relative; overflow: hidden; background: #0a0f1f }
+  #vnc { position: absolute; inset: 0 }
+  #vnc > div { background: #0a0f1f !important }
+  /* Shaped like the phone: the screen is the phone's size and stays so; the keyboard only hides its bottom. */
+  .shaped #vnc { right: auto; bottom: auto }
   .center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 24px; text-align: center; color: #b9c3e6; font-size: 15px; line-height: 1.45 }
   .center img { width: 120px; height: 120px }
   button { border: 0; border-radius: 12px; font: inherit; font-size: 15px; font-weight: 500; color: #fff; background: #2a3763; padding: 12px 16px; cursor: pointer; -webkit-tap-highlight-color: transparent }
@@ -29,12 +34,16 @@
   .row button { flex: 1 }
   #type { width: 100%; border: 1px solid #34477C; border-radius: 12px; background: #1a2342; color: #fff; font: inherit; font-size: 16px; padding: 11px 14px; outline: none }
   #type::placeholder { color: #7f8bb5 }
+  #clip { display: flex; gap: 8px; align-items: center; font-size: 14px; color: #b9c3e6 }
+  #clip span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+  #clip button { padding: 8px 12px; font-size: 14px }
   [hidden] { display: none !important }
 </style>
 </head>
 <body>
   <header><h1 id="title">Экран Морзика</h1><p id="status"></p></header>
   <div id="screen">
+    <div id="vnc"></div>
     <div class="center" id="intro">
       <img src="morzik-dizzy.png" alt="">
       <p id="introText">Секунду…</p>
@@ -42,9 +51,11 @@
     </div>
   </div>
   <footer id="controls">
+    <div id="clip" hidden><span id="clipText"></span><button id="clipCopy">Скопировать</button></div>
     <input id="type" type="text" placeholder="Печатай сюда — уйдёт в браузер" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="send">
     <div class="row">
       <button id="zoom">Крупно</button>
+      <button id="keyboard" hidden aria-label="Клавиатура">⌨︎</button>
       <button id="cancel">Не сейчас</button>
       <button class="main" id="done">Готово</button>
     </div>
@@ -55,11 +66,17 @@
 // только после Face ID). Пароль VNC сервер подставляет сам. Подробнее — login/gate.py.
 const GATE = 'https://sketch-server.<tailnet>.ts.net:6080';
 // In the Morzik App (iPhone) the app provides the same calls: its token instead of initData, Face ID through the Keychain.
-const tg = window.MorzikApp || (window.Telegram && Telegram.WebApp);
+const app = window.MorzikApp || null;
+const tg = app || (window.Telegram && Telegram.WebApp);
 const bm = tg?.BiometricManager;
 const $ = id => document.getElementById(id);
 const requestId = new URLSearchParams(location.search).get('r') || '';
 let rfb = null, session = null, keysyms = null, finished = false;
+// From a phone or a tablet Morzik's screen takes the device's shape: its size and pixels, a mobile Chrome with
+// touch. The app's own keyboard (MorzikApp.keyboard) opens by itself when a field on the screen gets the focus.
+const touch = !!app || matchMedia('(pointer: coarse)').matches;
+const nativeKeyboard = app?.keyboard?.native === true;
+let shaped = false, events = null, full = null, keyboardOpen = false, lastSize = '', sizeTimer = 0, hideTimer = 0;
 
 if (tg) {
   tg.ready(); tg.expand(); tg.setHeaderColor('#10172C'); tg.setBackgroundColor('#10172C'); tg.setBottomBarColor?.('#10172C');
@@ -141,6 +158,7 @@ async function open() {
       reply = await gate('/login/session', { deviceKey: await faceKey(true), request: requestId });
     }
     session = reply.session;
+    if (touch) await shape();
     await connect(reply);
   } catch (error) {
     stop(error instanceof Refused ? error.message : `Не вышло: ${error.message || error}`);

@@ -11,6 +11,7 @@ import tempfile
 import threading
 import time
 import unittest
+import unittest.mock
 import urllib.parse
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
@@ -163,6 +164,42 @@ class GateTest(unittest.TestCase):
         self.assertFalse(self.post("/login/state", {**app, "appToken": "phone-token"})[1]["canEnroll"])
         self.assertEqual(self.post("/login/enroll", {**app, "appToken": "phone-token"})[0], 403)
 
+    def test_phone_screen_and_its_events(self):
+        sleep = unittest.mock.patch.object(gate.time, "sleep", lambda s: None)
+        sleep.start()
+        self.addCleanup(sleep.stop)
+        gate.Handler.phone = phone = gate.PhoneScreen(run=FakeRun(), connect=FakeCdp)
+        self.addCleanup(setattr, gate.Handler, "phone", None)
+        _, enrolled, _ = self.post("/login/enroll", {})
+        _, session, _ = self.post("/login/session", {"deviceKey": enrolled["deviceKey"], "request": "abcdefabcdef0123"})
+        sid = session["session"]
+        self.assertEqual(self.post("/login/screen", {"session": "guess", **PHONE})[:2], (401, {"error": "session"}))
+        self.assertEqual(self.post("/login/screen", {"session": sid, "width": 1})[:2], (400, {"error": "size"}))
+        # The event stream: only for a known session, from the user's device.
+        for query, ip, status in (("session=guess", "100.1.1.1", 401), (f"session={sid}", "100.2.2.2", 403)):
+            conn = UnixConnection(self.sock)
+            conn.request("GET", f"/login/events?{query}", headers={
+                "Origin": ORIGIN, "Tailscale-User-Login": "user@example.com", "X-Forwarded-For": ip})
+            self.assertEqual(conn.getresponse().status, status)
+        conn = UnixConnection(self.sock)
+        conn.request("GET", f"/login/events?session={sid}", headers={
+            "Origin": ORIGIN, "Tailscale-User-Login": "user@example.com", "X-Forwarded-For": "100.1.1.1"})
+        stream = conn.getresponse()
+        self.assertEqual((stream.status, stream.getheader("Content-Type")), (200, "text/event-stream"))
+        self.assertEqual(stream.getheader("Access-Control-Allow-Origin"), ORIGIN)
+        status, reply, _ = self.post("/login/screen", {"session": sid, **PHONE})
+        self.assertEqual((status, reply), (200, {"screen": [1170, 2280], "dpr": 3.0}))
+        FakeCdp.last.on_event("Runtime.bindingCalled", {"name": "__morzikLogin", "payload": '{"focus": null}'}, "S-T1")
+
+        def data():
+            while not (line := stream.readline()).startswith(b"data: "):
+                pass
+            return json.loads(line[6:])
+        self.assertEqual(data(), {"type": "focus", "field": None})
+        self.assertEqual(self.post("/login/done", {"session": sid, "outcome": "done"})[0], 200)
+        self.assertEqual(data(), {"type": "end", "reason": "done"})
+        self.assertIsNone(phone.owner)
+
     def test_session_needs_a_known_key(self):
         status, reply, _ = self.post("/login/session", {"deviceKey": "guess"})
         self.assertEqual((status, reply["error"]), (401, "device_key"))
@@ -199,6 +236,143 @@ class GateTest(unittest.TestCase):
             resp = conn.getresponse()
             resp.read()
             self.assertEqual(resp.status, expected, path)
+
+
+class FakeCdp:
+    """Chrome over DevTools: one tab in a maximized window; remembers the calls."""
+
+    def __init__(self, base, on_event):
+        self.on_event, self.alive, self.calls, self.browser = on_event, True, [], "Chrome/156.0.1.2"
+        FakeCdp.last = self
+
+    def call(self, method, params=None, session=None, timeout=10):
+        self.calls.append((method, params or {}, session))
+        return {"Target.getTargets": {"targetInfos": [{"type": "page", "targetId": "T1"},
+                                                      {"type": "service_worker", "targetId": "W1"}]},
+                "Target.attachToTarget": {"sessionId": f"S-{(params or {}).get('targetId')}"},
+                "Browser.getWindowForTarget": {"windowId": 7, "bounds": {"windowState": "maximized"}},
+                "Runtime.evaluate": {"result": {"value": {"brands": [{"brand": "Chromium", "version": "156"}]}}},
+                }.get(method, {})
+
+    def made(self, method, session=None):
+        return [params for m, params, s in self.calls if m == method and (session is None or s == session)]
+
+    def close(self):
+        self.alive = False
+
+
+class FakeRun:
+    def __init__(self, current="1440 x 900"):
+        self.commands, self.current = [], current
+
+    def __call__(self, argv, **kwargs):
+        self.commands.append(argv[1:])
+        return type("Done", (), {"returncode": 0, "stdout": f"Screen 0: minimum 32 x 32, current {self.current}, maximum"})()
+
+
+PHONE = {"width": 390, "height": 760, "dpr": 3, "device": "phone"}
+
+
+class PhoneScreenTest(unittest.TestCase):
+    def setUp(self):
+        sleep = unittest.mock.patch.object(gate.time, "sleep", lambda s: None)
+        sleep.start()
+        self.addCleanup(sleep.stop)
+        self.run_ = FakeRun()
+        self.phone = gate.PhoneScreen(run=self.run_, connect=FakeCdp)
+
+    def test_metrics(self):
+        m = gate.screen_metrics(PHONE)
+        self.assertEqual((m["screen"], m["visible"], m["device"]), ((1170, 2280), 760, "phone"))
+        self.assertEqual(gate.screen_metrics({**PHONE, "visible": 5000})["visible"], 760)
+        ipad = gate.screen_metrics({"width": 1366, "height": 1000, "dpr": 2, "device": "tablet"})
+        self.assertEqual((ipad["screen"], ipad["device"]), ((2732, 2000), "tablet"))
+        # Too many pixels: a lower dpr, never under 1.
+        big = gate.screen_metrics({"width": 1900, "height": 1900, "dpr": 3})
+        self.assertEqual(big["dpr"], 1.25)
+        self.assertLessEqual(big["screen"][0] * big["screen"][1], gate.MAX_PIXELS)
+        for bad in ({}, {"width": "x", "height": 1}, {"width": 50, "height": 700}, {**PHONE, "dpr": 9}):
+            self.assertIsNone(gate.screen_metrics(bad), bad)
+
+    def test_phone_shape_then_desktop_back(self):
+        events = self.phone.listen("A")
+        self.phone.apply("A", gate.screen_metrics(PHONE))
+        cdp = FakeCdp.last
+        self.assertIn(["--fb", "1170x2280", "--output", "VNC-0", "--mode", "morzik-1170x2280"], self.run_.commands)
+        metrics = cdp.made("Emulation.setDeviceMetricsOverride", "S-T1")[-1]
+        self.assertEqual((metrics["width"], metrics["height"], metrics["deviceScaleFactor"], metrics["scale"],
+                          metrics["mobile"]), (390, 760, 3.0, 3.0, True))
+        self.assertEqual(cdp.made("Emulation.setVisibleSize", "S-T1")[-1], {"width": 1170, "height": 2280})
+        self.assertTrue(cdp.made("Emulation.setEmitTouchEventsForMouse", "S-T1")[0]["enabled"])
+        ua = cdp.made("Emulation.setUserAgentOverride", "S-T1")[0]
+        self.assertIn("Android", ua["userAgent"])
+        self.assertIn("Chrome/156.0.0.0 Mobile", ua["userAgent"])
+        self.assertTrue(ua["userAgentMetadata"]["mobile"])
+        self.assertEqual(cdp.made("Browser.setWindowBounds")[0]["bounds"], {"windowState": "fullscreen"})
+        self.assertEqual(cdp.made("Runtime.addBinding", "S-T1"), [{"name": "__morzikLogin"}])
+        self.assertEqual(cdp.made("Target.attachToTarget"), [{"targetId": "T1", "flatten": True}])
+
+        # A field on the screen gets the focus; the keyboard shortens the viewport, the screen stays.
+        cdp.on_event("Runtime.bindingCalled", {"name": "__morzikLogin",
+                                               "payload": json.dumps({"focus": {"type": "password", "enter": "go"}})}, "S-T1")
+        self.assertEqual(events.get(timeout=1), {"type": "focus", "field": {"type": "password", "enter": "go"}})
+        commands = len(self.run_.commands)
+        self.phone.apply("A", gate.screen_metrics({**PHONE, "visible": 420}))
+        self.assertEqual(len(self.run_.commands), commands)
+        self.assertEqual(cdp.made("Emulation.setDeviceMetricsOverride", "S-T1")[-1]["height"], 420)
+        self.assertEqual(cdp.made("Runtime.evaluate", "S-T1")[-1]["expression"], gate.SCROLL_TO_FOCUS)
+
+        # Turned sideways: a new screen, the old mode goes away.
+        self.phone.apply("A", gate.screen_metrics({**PHONE, "width": 844, "height": 330, "visible": 330}))
+        self.assertIn(["--fb", "2532x990", "--output", "VNC-0", "--mode", "morzik-2532x990"], self.run_.commands)
+        self.assertIn(["--rmmode", "morzik-1170x2280"], self.run_.commands)
+        self.assertEqual(cdp.made("Emulation.setDeviceMetricsOverride", "S-T1")[-1]["screenOrientation"]["angle"], 90)
+
+        self.assertFalse(self.phone.finish("someone else"))
+        self.assertTrue(self.phone.finish("A"))
+        self.assertEqual(events.get(timeout=1), {"type": "end", "reason": "done"})
+        self.assertIn(["--fb", "1440x900", "--output", "VNC-0", "--mode", "1440x900"], self.run_.commands)
+        self.assertIn(["--rmmode", "morzik-2532x990"], self.run_.commands)
+        self.assertEqual(cdp.made("Browser.setWindowBounds")[-1]["bounds"], {"windowState": "maximized"})
+        self.assertTrue(cdp.made("Emulation.clearDeviceMetricsOverride", "S-T1"))
+        self.assertFalse(cdp.alive)
+        self.assertIsNone(self.phone.owner)
+
+    def test_new_tabs_and_iframes_are_followed(self):
+        self.phone.listen("A")
+        self.phone.apply("A", gate.screen_metrics(PHONE))
+        cdp = FakeCdp.last
+        cdp.on_event("Target.targetCreated", {"targetInfo": {"type": "page", "targetId": "T2"}}, None)
+        self.assertTrue(cdp.made("Emulation.setDeviceMetricsOverride", "S-T2"))
+        cdp.on_event("Target.attachedToTarget", {"sessionId": "F1", "targetInfo": {"type": "iframe"}}, "S-T1")
+        self.assertTrue(cdp.made("Page.addScriptToEvaluateOnNewDocument", "F1"))
+        self.assertFalse(cdp.made("Emulation.setDeviceMetricsOverride", "F1"))
+
+    def test_another_page_takes_over(self):
+        first = self.phone.listen("A")
+        self.phone.apply("A", gate.screen_metrics(PHONE))
+        self.phone.apply("B", gate.screen_metrics(PHONE))
+        self.assertEqual(first.get(timeout=1), {"type": "end", "reason": "replaced"})
+        self.assertEqual(self.phone.owner, "B")
+
+    def test_released_when_the_page_goes_away(self):
+        with unittest.mock.patch.object(gate, "RELEASE_AFTER", 0.05):
+            events = self.phone.listen("A")
+            self.phone.apply("A", gate.screen_metrics(PHONE))
+            self.phone.unlisten("A", events)
+            deadline = time.time() + 2
+            while self.phone.owner and time.time() < deadline:
+                time.sleep(0.01)
+        self.assertIsNone(self.phone.owner)
+
+    def test_reset_after_a_restart(self):
+        self.run_.current = "1170 x 2280"
+        self.phone.reset()
+        self.assertIn(["--fb", "1440x900", "--output", "VNC-0", "--mode", "1440x900"], self.run_.commands)
+        self.run_.commands.clear()
+        self.run_.current = "1440 x 900"
+        self.phone.reset()
+        self.assertEqual(self.run_.commands, [["--current"]])
 
 
 if __name__ == "__main__":
