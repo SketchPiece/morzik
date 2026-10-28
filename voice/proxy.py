@@ -60,8 +60,10 @@ CONTEXT_ROUTE = "/voice/context"
 ASK_ROUTE = "/voice/ask"
 AFTER_CALL_ROUTE = "/voice/after-call"
 START_ROUTE = "/voice/start"
+CHAT_HISTORY_ROUTE = "/voice/chat-history"
+CALL_HISTORY_ROUTE = "/voice/call-history"
 # Called by ElevenLabs, so the caller IP allowlist applies; /voice/context comes from the Mini App backend.
-FROM_ELEVENLABS = (ROUTE, ASK_ROUTE, AFTER_CALL_ROUTE)
+FROM_ELEVENLABS = (ROUTE, ASK_ROUTE, AFTER_CALL_ROUTE, CHAT_HISTORY_ROUTE, CALL_HISTORY_ROUTE)
 # Said by the agent when Morzik could not do the task.
 ASK_FAILED = "Не удалось выполнить запрос. Коротко сообщи об этом пользователю."
 GREETINGS = (
@@ -398,7 +400,8 @@ class Handler(BaseHTTPRequestHandler):
         s = self.settings
         path = self.path.split("?")[0]
         handlers = {ROUTE: self.chat, CONTEXT_ROUTE: self.context, ASK_ROUTE: self.ask,
-                    AFTER_CALL_ROUTE: self.after_call, START_ROUTE: self.start}
+                    AFTER_CALL_ROUTE: self.after_call, START_ROUTE: self.start,
+                    CHAT_HISTORY_ROUTE: self.chat_history, CALL_HISTORY_ROUTE: self.call_history}
         if path not in handlers or (path == CONTEXT_ROUTE and not s["context_key"]) or (
                 path == AFTER_CALL_ROUTE and not s["webhook_secret"]) or (
                 path == START_ROUTE and not (s["elevenlabs_key"] and s["bot_token"] and s["telegram_user_id"])):
@@ -511,6 +514,16 @@ class Handler(BaseHTTPRequestHandler):
         if answer and conversation_id and new_session:
             self.calls.put(conversation_id, new_session)
         self.json_reply(200, {"answer": answer or ASK_FAILED})
+
+    def chat_history(self, body: dict) -> None:
+        """ElevenLabs tool read_chat: the app chat of the last days, read only when the call needs it."""
+        text = brain.recent_messages(self.settings["hermes_home"] / "state.db", limit=40, max_age_days=7)
+        self.json_reply(200, {"answer": text or "За неделю в чате ничего не было."})
+
+    def call_history(self, body: dict) -> None:
+        """ElevenLabs tool read_calls: the last calls before this one."""
+        text = brain.recent_calls(self.settings["hermes_home"], exclude=str(body.get("conversation_id") or ""))
+        self.json_reply(200, {"answer": text or "За последние три дня других звонков не было."})
 
     def after_call(self, body: dict) -> None:
         """ElevenLabs post-call webhook: Morzik saves what matters from the call."""

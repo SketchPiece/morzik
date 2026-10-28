@@ -3,9 +3,9 @@
 ElevenLabs runs its own fast model in the call. Its character is written in the agent prompt
 (voice/agent-prompt.md, a voice version of SOUL.md: SOUL is half about Telegram formatting and in
 places contradicts the voice rules). Before the call the Mini App backend asks for a snapshot (his
-memory about the user, the latest messages in the app, the time) and passes it to the agent as dynamic
-variables. During the call the agent hands real work to Morzik in Hermes
-("ask Morzik" tool). After the call ElevenLabs sends the transcript and Morzik saves what matters;
+memory about the user, calendar, reminders, weather, the time) and passes it to the agent as dynamic
+variables. During the call the agent hands real work to Morzik in Hermes (perform_task) and reads
+the app chat and past calls with its own tools when it needs them (read_chat, read_calls). After the call ElevenLabs sends the transcript and Morzik saves what matters;
 the transcript also reaches his chats with the next turn there (log_call, app/calls.py).
 
 Standard library only; the HTTP side lives in proxy.py.
@@ -286,8 +286,6 @@ def snapshot(hermes_home: pathlib.Path, now: datetime.datetime | None = None,
                                            _read(hermes_home / "memories/MEMORY.md")) if text)
     return {
         "memory": memory or "(пусто)",
-        "recent": recent_messages(hermes_home / "state.db") or "(давно не переписывались)",
-        "calls": recent_calls(hermes_home) or "(за сутки не созванивались)",
         "now": spoken_time(now),
         **_gather(sources or {}, timeout),
     }
@@ -409,11 +407,12 @@ def log_call(hermes_home: pathlib.Path, conversation_id: str, transcript: str, s
 
 # What the agent says aloud but a reader does not need: audio tags and the tool marker.
 SPOKEN_TAGS = re.compile(r"\[(?:[a-z_ ]+|perform_task)\]\s*")
+TOOL_RESULT = re.compile(r"^\(результат инструмента: (.*)\)$", re.M)
 
 
-def recent_calls(hermes_home: pathlib.Path, max_age: float = 86400, max_calls: int = 2,
-                 max_chars: int = 1500, now: float | None = None) -> str:
-    """The last calls of the day from CALLS_LOG, for the next call: so a second call remembers the first.
+def recent_calls(hermes_home: pathlib.Path, max_age: float = 3 * 86400, max_calls: int = 5,
+                 max_chars: int = 6000, exclude: str = "", now: float | None = None) -> str:
+    """The last calls from CALLS_LOG for the read_calls tool, without the call asking (exclude).
 
     A long call keeps its start (what it was about) and its end (where it stopped)."""
     now = time.time() if now is None else now
@@ -424,7 +423,8 @@ def recent_calls(hermes_home: pathlib.Path, max_age: float = 86400, max_calls: i
                 call = json.loads(line)
             except ValueError:
                 continue
-            if isinstance(call, dict) and call.get("transcript") and float(call.get("ended") or 0) >= now - max_age:
+            if isinstance(call, dict) and call.get("transcript") and call.get("id") != exclude and \
+                    float(call.get("ended") or 0) >= now - max_age:
                 calls.append(call)
     except OSError:
         return ""
@@ -432,7 +432,7 @@ def recent_calls(hermes_home: pathlib.Path, max_age: float = 86400, max_calls: i
     budget = max_chars // max(1, len(calls))
     parts = []
     for call in calls:
-        text = SPOKEN_TAGS.sub("", str(call["transcript"]))
+        text = TOOL_RESULT.sub(r"(Морзик узнал: \1)", SPOKEN_TAGS.sub("", str(call["transcript"])))
         if len(text) > budget:
             head = budget // 3
             text = text[:head].rstrip() + "\n…\n" + text[-(budget - head):].lstrip()

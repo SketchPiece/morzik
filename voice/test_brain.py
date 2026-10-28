@@ -137,7 +137,7 @@ class BrainTest(unittest.TestCase):
             snap = brain.snapshot(make_home(pathlib.Path(tmp)), datetime.datetime(2026, 10, 23, 17, 5))
         self.assertNotIn("soul", snap)
         self.assertEqual(snap["memory"], "Пользователь живёт в Springfield.")
-        self.assertEqual(snap["recent"], "(давно не переписывались)")
+        self.assertNotIn("recent", snap)
         self.assertEqual(snap["now"], "пятница, 23 октября 2026, 17:05")
 
     def test_recent_calls(self):
@@ -145,17 +145,20 @@ class BrainTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = pathlib.Path(tmp)
             self.assertEqual(brain.recent_calls(home, now=now), "")
-            brain.log_call(home, "old", "Пользователь: вчерашнее", duration=60, now=now - 2 * 86400)
-            brain.log_call(home, "c1", "Морзик: [smugly] Слушаю.\nПользователь: купи молока", duration=120,
-                           now=now - 3600)
+            brain.log_call(home, "old", "Пользователь: позавчерашнее", duration=60, now=now - 4 * 86400)
+            brain.log_call(home, "c1", "Морзик: [smugly] Слушаю.\nПользователь: купи молока\n(результат инструмента: готово)",
+                           duration=120, now=now - 3600)
             brain.log_call(home, "c2", "Пользователь: " + "а" * 3000, duration=30, now=now - 60)
-            text = brain.recent_calls(home, now=now, max_chars=1000)
+            brain.log_call(home, "now", "Пользователь: этот звонок", duration=5, now=now)
+            text = brain.recent_calls(home, now=now, max_chars=1000, exclude="now")
         first, second = text.split("\n\n")
-        self.assertEqual(first, "Звонок понедельник, 26 октября в 18:58, 2 мин:\nМорзик: Слушаю.\nПользователь: купи молока")
+        self.assertEqual(first, "Звонок понедельник, 26 октября в 18:58, 2 мин:\nМорзик: Слушаю.\n"
+                                "Пользователь: купи молока\n(Морзик узнал: готово)")
         self.assertTrue(second.startswith("Звонок понедельник, 26 октября в 19:58:\nПользователь: ааа"))
         self.assertIn("\n…\n", second)
         self.assertLess(len(second), 600)
-        self.assertNotIn("вчерашнее", text)
+        self.assertNotIn("позавчерашнее", text)
+        self.assertNotIn("этот звонок", text)
 
     def test_calendar_text(self):
         text = brain.calendar_text([
@@ -317,6 +320,18 @@ class RoutesTest(unittest.TestCase):
         status, snap = self.post("/voice/context", {}, {"Authorization": f"Bearer {CONTEXT_KEY}"})
         self.assertEqual(status, 200)
         self.assertEqual(snap["memory"], "Пользователь живёт в Springfield.")
+
+    def test_history_tools(self):
+        auth = {"Authorization": f"Bearer {KEY}"}
+        self.assertEqual(self.post("/voice/chat-history", {}, {"Authorization": f"Bearer {CONTEXT_KEY}"})[0], 401)
+        self.assertEqual(self.post("/voice/chat-history", {}, auth), (200, {"answer": "За неделю в чате ничего не было."}))
+        home = proxy.Handler.settings["hermes_home"]
+        brain.log_call(home, "conv_old", "Пользователь: купи молока", duration=60)
+        brain.log_call(home, "conv_now", "Пользователь: этот звонок", duration=5)
+        status, data = self.post("/voice/call-history", {"conversation_id": "conv_now"}, auth)
+        self.assertEqual(status, 200)
+        self.assertIn("купи молока", data["answer"])
+        self.assertNotIn("этот звонок", data["answer"])
 
     def test_ask_keeps_one_session_per_call(self):
         auth = {"Authorization": f"Bearer {KEY}"}
