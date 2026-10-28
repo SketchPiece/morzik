@@ -27,7 +27,9 @@ goes off to look something up silently. When no phone is connected, each message
 
 "busy" (on the socket and in /sync) says Morzik is working on something for the user: in a turn from his
 first tool call or a message sent mid-turn until the turn ends, and while background work he started from
-this chat (a process that reports on exit, an async subagent) is still running. Thinking alone is not busy.
+this chat (a process that reports on exit, an async subagent) is still running. Thinking alone is not busy, and
+neither is waiting for the user: while a card in the chat waits for his tap (an approval, morzik-login's "Войти в
+X"), the turn's own work does not count.
 """
 
 import asyncio
@@ -149,6 +151,7 @@ class MorzikAppAdapter(BasePlatformAdapter):
         self._busy = False
         self._background_task: Optional[asyncio.Task] = None
         self._approvals: dict = {}  # approval card id -> the session_key whose approval it answers
+        self._waiting: set = set()  # cards the turn waits on for the user's tap (approval, login): not busy then
 
     # --- lifecycle ---------------------------------------------------------------------------
 
@@ -199,6 +202,7 @@ class MorzikAppAdapter(BasePlatformAdapter):
             self._background_task = None
         self._work.update(open=False, done=False, working=False)
         self._background = False
+        self._waiting.clear()
         await self._update_busy("disconnect")
         for ws in list(self._sockets):
             try:
@@ -290,7 +294,7 @@ class MorzikAppAdapter(BasePlatformAdapter):
     # --- busy: Morzik is working on something for the user --------------------------------------------
 
     async def _update_busy(self, reason: str) -> None:
-        busy = bool(self._work["working"] or self._background)
+        busy = bool((self._work["working"] and not self._waiting) or self._background)
         if busy != self._busy:
             self._busy = busy
             sent = await self._broadcast({"type": "busy", "busy": busy})
@@ -308,6 +312,16 @@ class MorzikAppAdapter(BasePlatformAdapter):
         if work["open"] and not work["done"] and not work["working"]:
             work["working"] = True
             self._update_busy_threadsafe(reason)
+
+    def wait_for_user(self, message_id: str, waiting: bool) -> None:
+        """A card the turn waits on (approval, login): not busy until it is answered or gone. Safe from any thread."""
+        if not message_id:
+            return
+        if waiting:
+            self._waiting.add(message_id)
+        else:
+            self._waiting.discard(message_id)
+        self._update_busy_threadsafe(("waiting for the user on " if waiting else "answered: ") + message_id)
 
     def mark_turn_done(self, reason: str) -> None:
         """The agent loop has finished (or was stopped): the turn's work is over. Safe from any thread."""
@@ -570,6 +584,7 @@ class MorzikAppAdapter(BasePlatformAdapter):
     async def _answer_approval(self, message: dict, choice: str) -> dict:
         """Hand the user's choice to Hermes's approval wait; the card keeps what was asked and gets the outcome."""
         session_key = self._approvals.pop(message["id"], None)
+        self.wait_for_user(message["id"], False)
         count = 0
         if session_key and choice in ("once", "deny"):
             try:
@@ -742,6 +757,7 @@ class MorzikAppAdapter(BasePlatformAdapter):
     async def on_processing_complete(self, event, outcome) -> None:
         # Any outcome (success, failure, cancel): the turn is over and so is its "busy".
         self._work.update(open=False, done=False, working=False)
+        self._waiting.clear()
         await self._update_busy(f"turn over: {getattr(outcome, 'value', outcome)}")
         await self._set_typing(None)
 
@@ -907,6 +923,7 @@ class MorzikAppAdapter(BasePlatformAdapter):
         async with self._send_lock:
             message, _ = self.store.add("morzik", text, buttons=buttons)
             self._approvals[message["id"]] = prompt.session_key
+            self.wait_for_user(message["id"], True)
             await self._set_typing(None)
             await self._publish([message], push=True)
         logger.warning("morzik-app: approval card %s for %r", message["id"], prompt.command[:200])
@@ -919,6 +936,7 @@ class MorzikAppAdapter(BasePlatformAdapter):
         if not message or not any(b.get("kind") == "approval" for b in message.get("buttons") or []):
             return SendResult(success=False, error="Not supported")
         self._approvals.pop(message["id"], None)
+        self.wait_for_user(message["id"], False)
         logger.warning("morzik-app: approval card %s timed out", message["id"])
         await self._publish([self._settle_card(message, "⌛ Ответа не было, команда не выполнена.")])
         return SendResult(success=True, message_id=message["id"])
@@ -929,11 +947,13 @@ class MorzikAppAdapter(BasePlatformAdapter):
     # --- for other plugins (called from tool threads) ------------------------------------------------
 
     def post_buttons(self, text: str, buttons: list) -> Optional[str]:
-        """A message from Morzik with buttons (morzik-login's "Войти в X"); returns its id."""
+        """A message from Morzik with buttons (morzik-login's "Войти в X") the turn waits on: not busy until
+        clear_buttons; returns its id."""
         if self.store is None:
             return None
         message, _ = self.store.add("morzik", text, buttons=buttons)
         self.publish_threadsafe([message], push=True)
+        self.wait_for_user(message["id"], True)
         return message["id"]
 
     def post_text(self, text: str) -> Optional[str]:
@@ -949,6 +969,7 @@ class MorzikAppAdapter(BasePlatformAdapter):
             return
         changed = self.store.update(message_id, buttons=[])
         self.publish_threadsafe([changed])
+        self.wait_for_user(message_id, False)
 
 
 def _to_m4a(data: bytes, name: str) -> tuple[bytes, str, str, Optional[float]]:

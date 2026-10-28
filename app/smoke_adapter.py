@@ -5,7 +5,8 @@
 A throwaway state dir and port 8661; an echo handler stands in for Morzik. Checks sign-in (the code is read
 from the store, Telegram is stubbed), send + idempotent resend, the live socket (backlog, typing, split parts),
 reconnect from a revision, history, read marks, media round trip, a button posted from another thread and
-"busy" (tool calls and mid-turn messages from the agent's threads, background subagents, reset on failure) and
+"busy" (tool calls and mid-turn messages from the agent's threads, not while a card waits for the user's tap,
+background subagents, reset on failure) and
 approval cards (a tap resolves Hermes's pending approval, a timeout settles the card).
 """
 
@@ -86,6 +87,17 @@ async def check_busy(adapter, http, H):
         await asyncio.to_thread(in_agent, lambda: A._pre_tool_call("web_search", {"query": "x"}))
         assert await next_busy(ws) is True
         assert (await http.get(f"{BASE}/sync?since={adapter.store.current_rev()}", headers=H)).json()["busy"] is True
+        # Waiting for the user's tap is not busy: a login card until its buttons go, an approval card until answered.
+        card = await asyncio.to_thread(adapter.post_buttons, "войди", [{"id": "login", "title": "Войти в X",
+                                                                         "kind": "login", "value": "r"}])
+        assert await next_busy(ws) is False
+        await asyncio.to_thread(adapter.clear_buttons, card)
+        assert await next_busy(ws) is True
+        sent = await adapter.send_exec_approval(chat_id=A.CHAT_ID, command="ls", session_key="agent:main:x",
+                                                description="x")
+        assert await next_busy(ws) is False
+        assert (await adapter.edit_message(A.CHAT_ID, sent.message_id, "⌛ Approval timed out")).success
+        assert await next_busy(ws) is True
         await asyncio.to_thread(in_agent, lambda: A._mark_working("web_search"), lambda: A._turn_done(platform=A.PLATFORM))
         assert await next_busy(ws) is False
         await adapter.send(A.CHAT_ID, "нашёл")
