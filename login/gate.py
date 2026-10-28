@@ -683,6 +683,7 @@ class PhoneScreen:
         self.call("Emulation.setEmitTouchEventsForMouse", {"enabled": True, "configuration": "mobile"}, session)
         self.call("Runtime.enable", {}, session)
         self.call("Runtime.addBinding", {"name": "__morzikLogin"}, session)
+        self.call("Page.enable", {}, session)  # without it the script skips new documents
         self.call("Page.addScriptToEvaluateOnNewDocument", {"source": FOCUS_SCRIPT, "runImmediately": True}, session)
 
     def emulate(self, session: str) -> None:

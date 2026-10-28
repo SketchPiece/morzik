@@ -165,24 +165,172 @@ async function open() {
   }
 }
 
+// The page's size goes to the gate: the screen area in CSS pixels (its full height, and the visible part while
+// the keyboard is up), devicePixelRatio for sharpness, phone or tablet. The gate resizes Morzik's screen to
+// exactly these pixels, so noVNC shows it pixel for pixel; the keyboard only shortens Chrome's viewport.
+function fitBody() {
+  const vv = window.visualViewport;
+  document.documentElement.style.setProperty('--vv-height', `${vv ? vv.height : innerHeight}px`);
+  document.documentElement.style.setProperty('--vv-top', `${vv ? vv.offsetTop : 0}px`);
+}
+function measure() {
+  const box = $('screen').getBoundingClientRect();
+  const width = Math.round(box.width), height = Math.round(box.height);
+  if (!full || !keyboardOpen || width !== full.width) full = { width, height };
+  $('vnc').style.width = `${full.width}px`; $('vnc').style.height = `${full.height}px`;
+  return { width: full.width, height: full.height, visible: Math.min(height, full.height), dpr: devicePixelRatio,
+           device: app?.device || (Math.min(innerWidth, innerHeight) >= 600 ? 'tablet' : 'phone') };
+}
+async function sendSize(force = false) {
+  const size = measure(), key = JSON.stringify(size);
+  if (key === lastSize && !force) return;
+  lastSize = key;
+  await gate('/login/screen', { session, ...size });
+}
+function sizeChanged() {
+  fitBody();
+  if (!shaped) return;
+  clearTimeout(sizeTimer);
+  sizeTimer = setTimeout(() => sendSize().catch(() => {}), 250);
+}
+window.visualViewport?.addEventListener('resize', sizeChanged);
+window.visualViewport?.addEventListener('scroll', fitBody);
+addEventListener('resize', sizeChanged);
+addEventListener('orientationchange', sizeChanged);
+fitBody();
+
+async function shape() {
+  say('подстраиваю экран…');
+  document.body.classList.add('shaped');
+  $('controls').classList.add('on');  // before measuring: the buttons take their place from the start
+  $('zoom').hidden = true;
+  if (nativeKeyboard) { $('type').hidden = true; $('keyboard').hidden = false; }
+  // Events from the gate: a field on the screen got or lost the focus. While this stream is open the screen
+  // keeps the phone's shape; once it is gone for a while (app closed), the gate puts the desktop back.
+  events?.close();
+  events = new EventSource(`${GATE}/login/events?session=${encodeURIComponent(session)}`);
+  events.onmessage = event => onGateEvent(JSON.parse(event.data));
+  events.onopen = () => { if (shaped) sendSize(true).catch(() => {}); };  // after a reconnect
+  try {
+    await sendSize(true);
+    shaped = true;
+  } catch {
+    // Chrome did not answer: the desktop screen as before.
+    events.close(); events = null;
+    document.body.classList.remove('shaped'); $('zoom').hidden = false;
+    $('vnc').style.width = $('vnc').style.height = '';
+  }
+}
+
+function onGateEvent(event) {
+  if (event.type === 'focus') event.field ? showKeyboard(event.field) : hideKeyboardSoon();
+  else if (event.type === 'end') {
+    events?.close(); events = null; shaped = false;
+    if (event.reason === 'replaced' && !finished) { rfb?.disconnect(); stop('Экран открыли на другом устройстве.'); }
+  }
+}
+
+function setKeyboard(open) { keyboardOpen = open; sizeChanged(); }
+function showKeyboard(field) {
+  clearTimeout(hideTimer);
+  if (nativeKeyboard) {
+    app.keyboard.show({ type: field.type, enter: field.enter || undefined, code: !!field.code });
+    setKeyboard(true);
+    return;
+  }
+  // Telegram: the field under the screen takes the layout of the field on the screen. The phone may not open
+  // the keyboard without a tap on it, but a keyboard already open stays and switches.
+  const type = $('type');
+  type.type = field.type === 'password' ? 'password' : 'text';
+  type.inputMode = { number: 'numeric', tel: 'tel', email: 'email', url: 'url', search: 'search' }[field.type] || 'text';
+  type.enterKeyHint = field.enter || 'send';
+  type.autocomplete = field.code ? 'one-time-code' : field.type === 'password' ? 'current-password' : 'off';
+  type.focus({ preventScroll: true });
+}
+function hideKeyboardSoon() {
+  // Focus moving between fields (or into an iframe) comes as "lost" then "got": wait a moment.
+  clearTimeout(hideTimer);
+  hideTimer = setTimeout(() => {
+    if (nativeKeyboard) { app.keyboard.hide(); setKeyboard(false); }
+    else if (document.activeElement === $('type')) $('type').blur();
+  }, 300);
+}
+if (nativeKeyboard) {
+  app.keyboard.onInput = input => {
+    if (!rfb) return;
+    if (input.text) typeText(input.text);
+    else if (input.key === 'Backspace') rfb.sendKey(0xff08, 'Backspace');
+    else if (input.key === 'Enter') rfb.sendKey(0xff0d, 'Enter');
+  };
+  app.keyboard.onClose = () => setKeyboard(false);  // the user put it away: the focus on the screen stays
+  $('keyboard').addEventListener('click', () => {  // for fields the focus watch does not see (canvas and such)
+    app.keyboard.show({ type: 'text' }); setKeyboard(true);
+  });
+}
+$('type').addEventListener('focus', () => { if (!nativeKeyboard) setKeyboard(true); });
+$('type').addEventListener('blur', () => { if (!nativeKeyboard) setKeyboard(false); });
+
+// Clipboard both ways. Copied on the screen -> the phone (the app writes it; in Telegram a tap on «Скопировать»,
+// since a web page may only write the clipboard on a tap). The phone's clipboard -> the screen on connect and
+// whenever the user comes back to the app with something new.
+let clip = null;
+function toScreenClipboard(text) {
+  if (!text || !rfb || text === clip) return;
+  clip = text;
+  rfb.clipboardPasteFrom(text);
+}
+function fromScreenClipboard(text) {
+  if (!text || text === clip) return;
+  clip = text;
+  if (app?.clipboard) return app.clipboard.write(text);
+  $('clipText').textContent = `Скопировано: ${text}`;
+  $('clip').hidden = false;
+  $('clipCopy').onclick = async () => {
+    try { await navigator.clipboard.writeText(text); }
+    catch {
+      const area = Object.assign(document.createElement('textarea'), { value: text });
+      document.body.append(area); area.select(); document.execCommand('copy'); area.remove();
+    }
+    $('clip').hidden = true; haptic('success');
+  };
+}
+
 async function connect({ ticket, password, request }) {
   say('подключаюсь…');
   const [{ default: RFB }, keysymdef] = await Promise.all([
     import(`${GATE}/novnc/core/rfb.js`), import(`${GATE}/novnc/core/input/keysymdef.js`)]);
   keysyms = keysymdef.default;
-  rfb = new RFB($('screen'), `${GATE.replace('https', 'wss')}/login/ws?ticket=${encodeURIComponent(ticket)}`,
+  rfb = new RFB($('vnc'), `${GATE.replace('https', 'wss')}/login/ws?ticket=${encodeURIComponent(ticket)}`,
                 { credentials: { password } });
   rfb.scaleViewport = true;
   rfb.background = '#0a0f1f';
-  rfb.addEventListener('connect', () => {
+  if (shaped) {
+    // A tap is a tap on the screen, not a grab of the keyboard focus: the phone's keyboard stays as it is.
+    rfb.focusOnClick = false;
+  }
+  rfb.addEventListener('connect', async () => {
     $('intro').hidden = true; $('controls').classList.add('on'); haptic('success');
     say(request ? (request.waiting ? 'войди и нажми «Готово»' : 'Морзик уже не ждёт этого входа') : 'экран Морзика');
+    if (app?.clipboard) {
+      app.clipboard.onChange = toScreenClipboard;
+      toScreenClipboard(await app.clipboard.read().catch(() => null));
+    }
   });
+  rfb.addEventListener('clipboard', event => fromScreenClipboard(event.detail.text));
   rfb.addEventListener('disconnect', event => {
     rfb = null; $('controls').classList.remove('on');
+    events?.close(); events = null; shaped = false;
     if (!finished) stop(event.detail.clean ? 'Экран закрыт.' : 'Связь с экраном пропала.');
   });
   rfb.addEventListener('securityfailure', () => stop('Сервер не принял пароль экрана.'));
+}
+
+// One finger scrolls the page (Chrome turns the drag into touch), a tap clicks, two fingers scroll too.
+// Pinch would be Ctrl+wheel, which zooms the site in Chrome and stays after the login: not passed on.
+for (const kind of ['gesturestart', 'gesturemove', 'gestureend']) {
+  $('screen').addEventListener(kind, event => {
+    if (shaped && event.detail?.type === 'pinch') event.stopImmediatePropagation();
+  }, true);
 }
 
 // Typing: the field is the phone keyboard; each character goes to the screen as a key press.
@@ -199,8 +347,18 @@ $('type').addEventListener('beforeinput', event => {
   const kind = event.inputType;
   if (kind === 'deleteContentBackward') rfb.sendKey(0xff08, 'Backspace');
   else if (kind === 'insertLineBreak' || kind === 'insertParagraph') rfb.sendKey(0xff0d, 'Enter');
-  else if (kind === 'insertFromPaste') typeText(event.dataTransfer?.getData('text/plain') || event.data || '');
+  else if (kind === 'insertFromPaste') {
+    const text = event.dataTransfer?.getData('text/plain') || event.data || '';
+    toScreenClipboard(text);  // so a paste on the screen itself works too
+    typeText(text);
+  }
   else if (event.data) typeText(event.data);
+});
+$('type').addEventListener('input', event => {  // AutoFill and one-time codes may fill the field without beforeinput
+  if (event.isComposing || /Composition/.test(event.inputType || '')) return;
+  const type = $('type');
+  if (rfb && type.value) typeText(type.value);
+  type.value = '';
 });
 $('type').addEventListener('keydown', event => {
   if (!rfb) return;
@@ -220,6 +378,8 @@ async function finish(outcome) {
   finished = true;
   try {
     const { heard } = session ? await gate('/login/done', { session, outcome }) : { heard: false };
+    events?.close(); events = null;
+    if (nativeKeyboard) app.keyboard.hide();
     rfb?.disconnect();
     stop(heard ? (outcome === 'done' ? 'Готово, Морзик продолжает.' : 'Ок, Морзик понял.')
                : 'Морзик уже не ждёт: напиши ему в чат.', false);
