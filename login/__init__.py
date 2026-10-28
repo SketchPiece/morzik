@@ -151,19 +151,20 @@ def _request_login(params, **kwargs):
     path = requests / f"{request_id}.json"
     _write(path, {"id": request_id, "site": site, "url": url, "status": "waiting", "created": time.time()})
     chat_id = os.environ.get("TELEGRAM_HOME_CHANNEL", "")
-    # The button goes to Telegram and to the Morzik App: the user taps it wherever he is.
+    # The button goes to the Morzik App; Telegram only when the app can't take it (we are moving off Telegram).
     sent, app, app_message, problems = None, _app(), None, []
-    try:
-        sent = _bot("sendMessage", chat_id=chat_id, text=message, reply_markup={"inline_keyboard": [[{
-            "text": f"Войти в {site}", "web_app": {"url": f"{APP_URL}?r={request_id}"}}]]})
-    except (OSError, ValueError, RuntimeError) as exc:
-        problems.append(f"telegram: {exc}")
     if app is not None:
         try:
             app_message = app.post_buttons(message, [{"id": "login", "title": f"Войти в {site}", "kind": "login",
                                                       "value": request_id}])
         except Exception as exc:
             problems.append(f"app: {exc}")
+    if app_message is None:
+        try:
+            sent = _bot("sendMessage", chat_id=chat_id, text=message, reply_markup={"inline_keyboard": [[{
+                "text": f"Войти в {site}", "web_app": {"url": f"{APP_URL}?r={request_id}"}}]]})
+        except (OSError, ValueError, RuntimeError) as exc:
+            problems.append(f"telegram: {exc}")
     if sent is None and app_message is None:
         path.unlink(missing_ok=True)
         return json.dumps({"success": False, "error": f"could not message the user: {'; '.join(problems)}"})
