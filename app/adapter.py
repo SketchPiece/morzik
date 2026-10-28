@@ -936,6 +936,14 @@ class MorzikAppAdapter(BasePlatformAdapter):
         self.publish_threadsafe([message], push=True)
         return message["id"]
 
+    def post_text(self, text: str) -> Optional[str]:
+        """A message from Morzik outside a chat turn (send_to_app_chat from a voice call); returns its id."""
+        if self.store is None:
+            return None
+        message, _ = self.store.add("morzik", text)
+        self.publish_threadsafe([message], push=True)
+        return message["id"]
+
     def clear_buttons(self, message_id: str) -> None:
         if self.store is None or not message_id:
             return
@@ -1049,6 +1057,31 @@ def _app_turn() -> bool:
         return False
 
 
+SEND_SCHEMA = {
+    "name": "send_to_app_chat",
+    "description": (
+        "Написать пользователю в чат приложения Морзик: ссылку, адрес, номер, список, то, что удобнее прочитать, "
+        "чем услышать. Только для голосового звонка: в чате приложения и в Telegram просто отвечай."),
+    "parameters": {
+        "type": "object",
+        "properties": {"text": {"type": "string", "description": "Сообщение целиком, как его прочтёт пользователь."}},
+        "required": ["text"],
+    },
+}
+
+
+def _send_to_app_chat(params, **kwargs):
+    text = str((params or {}).get("text") or "").strip()
+    if not text:
+        return json.dumps({"success": False, "error": "text is empty"})
+    adapter = ACTIVE[0]
+    message_id = adapter.post_text(text) if adapter is not None else None
+    if message_id is None:
+        return json.dumps({"success": False, "error": "the Morzik App chat is not running, nothing was sent"})
+    logger.info("morzik-app: send_to_app_chat %s (%d chars)", message_id, len(text))
+    return json.dumps({"success": True, "message_id": message_id})
+
+
 def _mark_working(tool_name="", **kwargs):
     # A voice reply is Morzik talking, not working (as in morzik-chat).
     adapter = ACTIVE[0]
@@ -1137,6 +1170,9 @@ def register(ctx) -> None:
         ctx.register_hook("post_tool_call", _mark_working)
         ctx.register_hook("post_llm_call", _turn_done)
         ctx.register_hook("agent_loop_stopped", _turn_stopped)
+    if hasattr(ctx, "register_tool"):  # for voice calls (api_server toolset morzik-app-send)
+        ctx.register_tool(name="send_to_app_chat", toolset="morzik-app-send", schema=SEND_SCHEMA,
+                          handler=_send_to_app_chat, emoji="💬")
     kwargs = dict(
         name=PLATFORM, label="Morzik App", adapter_factory=lambda cfg: MorzikAppAdapter(cfg),
         check_fn=check_requirements, validate_config=validate_config, is_connected=is_connected,
