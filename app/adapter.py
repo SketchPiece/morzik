@@ -738,7 +738,7 @@ class MorzikAppAdapter(BasePlatformAdapter):
         mc = _morzik_chat()
         if mc is not None and not text.startswith("/"):
             try:  # the "ща" when he goes off to look something up without a word (morzik-chat)
-                mc._turn.update(id=mc._turn["id"] + 1, spoke=False, tool=False)
+                mc._turn.update(id=mc._turn["id"] + 1, spoke=False, tool=False, tools=0, line=None)
                 if hasattr(mc, "_patch_interim"):
                     mc._patch_interim()
                 asyncio.ensure_future(mc._ack_if_silent(self, CHAT_ID, mc._turn["id"]))

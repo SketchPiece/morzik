@@ -1,0 +1,71 @@
+diff --git a/agent/fallback_cooldown.py b/agent/fallback_cooldown.py
+index a42d7a2..d9bc9bb 100644
+--- a/agent/fallback_cooldown.py
++++ b/agent/fallback_cooldown.py
+@@ -59,7 +59,7 @@ def _arm_rate_limit_cooldown(
+     primary_provider = ((agent._primary_runtime or {}).get("provider") or "").strip().lower()
+     if getattr(agent, "_fallback_activated", False) and not (primary_provider and current_provider == primary_provider):
+         return None
+-    backoff_count = getattr(agent, "_rate_limit_backoff_count", 0)
++    backoff_count = getattr(agent, "_rate_limit_backoff_count", 0) or 0
+     agent._rate_limit_backoff_count = backoff_count + 1
+     provider_delay = _provider_reset_delay(reset_at)
+     if provider_delay is not None:
+diff --git a/agent/voice_turn_route.py b/agent/voice_turn_route.py
+index 3be6189..70fb220 100644
+--- a/agent/voice_turn_route.py
++++ b/agent/voice_turn_route.py
+@@ -111,7 +111,9 @@ def _capture(agent: Any) -> dict[str, Any]:
+     from agent.primary_runtime_snapshot import _build_primary_runtime_snapshot
+     return {
+         "snapshot": _build_primary_runtime_snapshot(agent, agent.api_mode),
+-        **{name: getattr(agent, name, None) for name in _EXTRA_FIELDS},
++        # Only fields the agent has: a missing one put back as None broke later arithmetic on it
++        # (``_rate_limit_backoff_count + 1`` on the next rate limit failed the turn).
++        "extra": {name: getattr(agent, name) for name in _EXTRA_FIELDS if hasattr(agent, name)},
+     }
+ 
+ 
+@@ -119,7 +121,10 @@ def _reinstall(agent: Any, state: dict[str, Any]) -> None:
+     from agent.route_binding import reinstall_runtime_snapshot
+     reinstall_runtime_snapshot(agent, state["snapshot"])
+     for name in _EXTRA_FIELDS:
+-        setattr(agent, name, state[name])
++        if name in state["extra"]:
++            setattr(agent, name, state["extra"][name])
++        elif name in vars(agent):
++            delattr(agent, name)
+ 
+ 
+ def _warn_once(agent: Any, target: dict[str, Any], reason: str, task: str = TASK) -> None:
+diff --git a/tests/agent/test_voice_turn_route.py b/tests/agent/test_voice_turn_route.py
+index 33f9f05..b67a7a6 100644
+--- a/tests/agent/test_voice_turn_route.py
++++ b/tests/agent/test_voice_turn_route.py
+@@ -150,3 +150,26 @@ def test_plugin_turn_route_runs_one_turn_on_its_task(tmp_path, monkeypatch):
+         assert routed["model"] == "light-model"
+         assert agent.model == "fake-model"
+         assert agent._turn_route_task_pending == ""
++
++
++def test_route_restore_never_turns_a_missing_field_into_none(tmp_path, monkeypatch):
++    """A field the agent did not have before the routed turn is absent after it, not None:
++    ``_rate_limit_backoff_count = None`` failed the next rate-limited turn on ``None + 1``."""
++    with FakeLLMServer([Text("main one")]) as main, FakeLLMServer([Text("voice reply")]) as voice:
++        home = write_hermes_home(tmp_path / ".hermes", main.base_url, extra_config=(
++            "auxiliary:\n  voice_chat:\n    provider: custom\n"
++            f"    base_url: {voice.base_url}\n    model: voice-model\n    api_key: sk-fake-voice\n"
++        ))
++        monkeypatch.setenv("HERMES_HOME", str(home))
++        agent = _agent(home, main.base_url)
++        agent.__dict__.pop("_rate_limit_backoff_count", None)
++        agent._voice_turn_pending = True
++        agent.run_conversation("spoken question")
++        assert getattr(agent, "_rate_limit_backoff_count", 0) is not None
++
++        from agent.fallback_cooldown import _arm_rate_limit_cooldown
++        from agent.error_classifier import FailoverReason
++        agent._rate_limit_backoff_count = None  # tolerated as well
++        agent._fallback_activated = False
++        assert _arm_rate_limit_cooldown(agent, FailoverReason.rate_limit) == 60
++        assert agent._rate_limit_backoff_count == 1
