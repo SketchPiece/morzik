@@ -6,8 +6,10 @@ A throwaway state dir and port 8661; an echo handler stands in for Morzik. Check
 from the store, Telegram is stubbed), send + idempotent resend, the live socket (backlog, typing, split parts),
 reconnect from a revision, history, read marks, media round trip, a button posted from another thread and
 "busy" (tool calls and mid-turn messages from the agent's threads, not while a card waits for the user's tap,
-background subagents, reset on failure) and
-approval cards (a tap resolves Hermes's pending approval, a timeout settles the card).
+background subagents, reset on failure),
+approval cards (a tap resolves Hermes's pending approval, a timeout settles the card) and failures (Hermes's
+notice turns the user's message 'unanswered' or 'failed' instead of reaching the chat; "retry" sends it again).
+Loads morzik-chat from ~/.hermes/plugins when it is there (the failure check needs it).
 """
 
 import asyncio
@@ -198,6 +200,46 @@ async def check_approvals(adapter, http, H):
     assert adapter.store.last_seq() > before
 
 
+def load_morzik_chat():
+    import importlib.util
+    path = os.path.expanduser("~/.hermes/plugins/morzik-chat/__init__.py")
+    if not os.path.exists(path):
+        return False
+    spec = importlib.util.spec_from_file_location("morzik_chat_smoke", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return True
+
+
+async def check_failures(adapter, http, H):
+    echo = adapter.handle_message
+    notices = {"unanswered": "\u26a0\ufe0f Something went wrong and I couldn't finish this reply.\n\nThis turn did not "
+                             "complete. Some actions may already have run; verify their effects before resending.",
+               "failed": "Your message was interrupted before processing. Please resend it."}
+    for status, notice in notices.items():
+        async def broken(event, notice=notice):
+            await adapter.on_processing_start(event)
+            await adapter.send(A.CHAT_ID, notice)
+            await adapter.on_processing_complete(event, None)
+        adapter.handle_message = broken
+        before = adapter.store.last_seq()
+        r = await http.post(f"{BASE}/messages", headers=H, json={"client_id": f"f-{status}", "text": "долго печатается?"})
+        mine = r.json()["message"]["id"]
+        await asyncio.sleep(.3)
+        assert adapter.store.get(mine)["status"] == status, adapter.store.get(mine)
+        assert not [m for m in adapter.store.tail(10) if m["seq"] > before and m["role"] == "morzik"], "Morzik spoke"
+        adapter.handle_message = echo
+        A._morzik_chat()._remember("эхо: долго печатается?\n\nвторая мысль")  # the model's words, for its filter
+        r = await http.post(f"{BASE}/retry", headers=H, json={"message_id": mine})
+        assert r.json()["message"]["status"] == "sent", r.text
+        await asyncio.sleep(1.0)
+        assert adapter.store.get(mine)["status"] == "read", adapter.store.get(mine)
+        assert [m["text"] for m in adapter.store.tail(2)] == ["эхо: долго печатается?", "вторая мысль"]
+        r = await http.post(f"{BASE}/retry", headers=H, json={"message_id": mine})
+        assert r.json()["message"]["status"] == "read", r.text  # nothing to retry any more
+
+
 async def main():
     tmp = tempfile.mkdtemp()
     adapter = A.MorzikAppAdapter(PlatformConfig(enabled=True, extra={"state_dir": tmp, "port": 8661}))
@@ -277,6 +319,10 @@ async def main():
 
             await check_busy(adapter, http, H)
             await check_approvals(adapter, http, H)
+            if load_morzik_chat():
+                await check_failures(adapter, http, H)
+            else:
+                print("morzik-chat not found: failure check skipped")
 
             # A reply with a quote of a fragment: stored with the message.
             target, _ = adapter.store.add("morzik", "завтра в 10 созвон, в 15:30 стоматолог")

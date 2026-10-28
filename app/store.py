@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS messages (
   text TEXT NOT NULL DEFAULT '',
   media TEXT,                       -- JSON: {id, kind, mime, name, size, duration, width, height, url}
   buttons TEXT,                     -- JSON list: {id, title, kind: 'login'|'url'|'reply'|'approval', value}
-  status TEXT NOT NULL DEFAULT 'sent',  -- user messages: 'sent' | 'read'
+  status TEXT NOT NULL DEFAULT 'sent',  -- user messages: 'sent' | 'read' | 'failed' (never reached Morzik) | 'unanswered' (his reply broke)
   deleted INTEGER NOT NULL DEFAULT 0,
   created REAL NOT NULL,
   rev INTEGER NOT NULL
@@ -198,6 +198,11 @@ class Store:
             rows = self._db.execute("SELECT * FROM messages WHERE deleted=0 AND seq<? ORDER BY seq DESC LIMIT ?",
                                     (seq, limit)).fetchall()
         return [self.public(r) for r in reversed(rows)]
+
+    def last_user(self) -> dict | None:
+        with self._lock:
+            return self.public(self._db.execute(
+                "SELECT * FROM messages WHERE role='user' AND deleted=0 ORDER BY seq DESC LIMIT 1").fetchone())
 
     def last_seq(self) -> int:
         with self._lock:

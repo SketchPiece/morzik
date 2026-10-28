@@ -13,6 +13,7 @@ The phone app talks to this adapter over HTTPS (Tailscale Funnel → 127.0.0.1:8
     POST /app/v1/read         {seq}                  read up to here (badge)
     POST /app/v1/action       {message_id, button_id}  tap on a reply button or an approval button
     POST /app/v1/react        {message_id, emoji}    the user's reaction ("" takes it back)
+    POST /app/v1/retry        {message_id}           send a 'failed' / 'unanswered' message of the user again
     GET  /app/v1/ws?since=REV                        live: missed changes first, then new ones, typing, busy
 
 A command Hermes wants the user's OK for comes as a message from Morzik with two "approval" buttons (Разрешить /
@@ -23,7 +24,8 @@ Everything but pairing needs ``Authorization: Bearer <device token>``. See store
 
 Morzik behaves here as in Telegram (morzik-chat): a short reply goes out as several messages, "typing…"
 shows only right before each one, Hermes's own notices never reach the chat, a short "ща" goes out when he
-goes off to look something up silently. When no phone is connected, each message from Morzik is pushed.
+goes off to look something up on a long task. When a message of the user did not reach Morzik or his reply to it
+broke, Morzik says nothing: the message itself turns 'failed' or 'unanswered', and the app offers to send it again. When no phone is connected, each message from Morzik is pushed.
 
 "busy" (on the socket and in /sync) says Morzik is working on something for the user: in a turn from his
 first tool call or a message sent mid-turn until the turn ends, and while background work he started from
@@ -92,6 +94,9 @@ def _env(name: str, default: str = "") -> str:
     return (get_scoped_secret(name, default) or default).strip()
 
 
+FAILED_STATUSES = ("failed", "unanswered")
+
+
 def _morzik_chat():
     """Morzik's Telegram manners plugin, if loaded: its splitter and "is this Morzik talking" filter."""
     for module in list(sys.modules.values()):
@@ -147,6 +152,7 @@ class MorzikAppAdapter(BasePlatformAdapter):
         # This turn: open (on_processing_start..complete), done (the agent loop has finished, only the final
         # reply is left), working (a tool was called or a message went out mid-turn). Set from agent threads.
         self._work = {"open": False, "done": False, "working": False}
+        self._turn_message_id = None  # the user's message the current turn answers
         self._background = False
         self._busy = False
         self._background_task: Optional[asyncio.Task] = None
@@ -175,6 +181,7 @@ class MorzikAppAdapter(BasePlatformAdapter):
             r.add_post(f"{API}/read", self._read)
             r.add_post(f"{API}/action", self._action)
             r.add_post(f"{API}/react", self._react)
+            r.add_post(f"{API}/retry", self._retry)
             r.add_get(f"{API}/ws", self._ws)
             r.add_get(f"{API}/health", lambda request: web.json_response({"ok": True}))
             self._runner = web.AppRunner(app, access_log=None)
@@ -581,6 +588,22 @@ class MorzikAppAdapter(BasePlatformAdapter):
             asyncio.ensure_future(self._dispatch(reply))
         return self._json({"message": reply})
 
+    async def _retry(self, request):
+        """"Повторить" under a message that did not reach Morzik or got no reply: it goes to him again."""
+        if not self._device(request):
+            return self._error(401, "unauthorized")
+        body = await self._body(request)
+        message = self.store.get(str(body.get("message_id") or ""))
+        if message is None or message["deleted"] or message["role"] != "user":
+            return self._error(404, "no_message")
+        if message["status"] not in FAILED_STATUSES:
+            return self._json({"message": message})  # a second tap, or already answered
+        changed = self.store.update(message["id"], status="sent")
+        await self._publish([changed])
+        logger.warning("morzik-app: retry of %s (was %s)", message["id"], message["status"])
+        asyncio.ensure_future(self._dispatch(changed))
+        return self._json({"message": changed})
+
     async def _answer_approval(self, message: dict, choice: str) -> dict:
         """Hand the user's choice to Hermes's approval wait; the card keeps what was asked and gets the outcome."""
         session_key = self._approvals.pop(message["id"], None)
@@ -749,6 +772,7 @@ class MorzikAppAdapter(BasePlatformAdapter):
     async def on_processing_start(self, event: MessageEvent) -> None:
         """Morzik took the message: it and everything before it turn "read"."""
         self._work.update(open=True, done=False, working=False)
+        self._turn_message_id = str(event.message_id or "") or None
         await self._update_busy("turn started")
         message = self.store.get(str(event.message_id or "")) if self.store else None
         if message:
@@ -763,6 +787,30 @@ class MorzikAppAdapter(BasePlatformAdapter):
 
     # --- outbound: Morzik talks --------------------------------------------------------------------
 
+    def _failure(self, content: str) -> Optional[str]:
+        """The status Hermes's notice means for the user's message: 'failed' (it never reached Morzik),
+        'unanswered' (he got it, the reply broke) or None (not such a notice)."""
+        mc = _morzik_chat()
+        if mc is None or not content or mc._is_morzik(content):
+            return None
+        try:
+            kind = next((k for k, pattern, _ in mc.NATURAL if pattern.search(content)), None)
+        except Exception:
+            return None
+        if kind == "resend" or (kind is None and re.search(r"refused|not (?:saved|answered)", content, re.I)):
+            return "failed"
+        return "unanswered" if kind == "failed" else None
+
+    async def _mark_failed(self, status: str, content: str) -> None:
+        """Show the failure on the user's message instead of a line from Morzik."""
+        message = self.store.get(self._turn_message_id or "") if self._turn_message_id else None
+        if message is None or message["role"] != "user":
+            message = self.store.last_user()
+        logger.warning("morzik-app: Hermes said %r -> %s on %s", content[:300], status,
+                       message["id"] if message else "no message")
+        if message is not None and not message["deleted"]:
+            await self._publish([self.store.update(message["id"], status=status)])
+
     def _filter(self, content: str) -> Optional[str]:
         """Only Morzik talks: Hermes's own texts are dropped or turned into a short line in his voice."""
         mc = _morzik_chat()
@@ -774,8 +822,6 @@ class MorzikAppAdapter(BasePlatformAdapter):
                 return None
             if not mc._is_morzik(content):
                 line = mc._natural_line(content)  # "" is morzik-chat's "drop, Morzik says it himself"
-                if line is None and re.search(r"refused|not (?:saved|answered)", content, re.I):
-                    line = "твоё сообщение у меня потерялось, напиши ещё раз?"  # the user is waiting for an answer
                 logger.warning("morzik-app: Hermes said %r -> %s", content[:300], repr(line) if line else "dropped")
                 if line:
                     mc._remember(line)
@@ -828,6 +874,9 @@ class MorzikAppAdapter(BasePlatformAdapter):
             pass  # the plain-text approval prompt (buttons failed): the user must see it to answer /approve
         elif APPROVAL_TIMED_OUT_RE.search(content or ""):
             content = "не дождался твоего ок, команду не выполнил"  # its card is gone or was never sent
+        elif status := self._failure(content or ""):
+            await self._mark_failed(status, content)
+            return SendResult(success=True)
         else:
             content = self._filter(content or "")
         if not content:
