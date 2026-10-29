@@ -91,10 +91,13 @@ function stop(text, retry = true) {
 }
 
 class Refused extends Error {}
-async function gate(path, body) {
+// Without Tailscale the gate's name resolves to the public Funnel address, where this port never answers and
+// the connection just hangs, so every call gets a deadline. Shaping the screen can take a while on the server.
+const timeout = ms => AbortSignal.timeout?.(ms) ?? (() => { const c = new AbortController(); setTimeout(() => c.abort(), ms); return c.signal; })();
+async function gate(path, body, wait = 15000) {
   let res;
   try {
-    res = await fetch(GATE + path, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    res = await fetch(GATE + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: timeout(wait),
                                       body: JSON.stringify({ initData: tg.initData, ...(tg.appToken ? { appToken: tg.appToken } : {}), ...body }) });
   } catch {
     throw new Refused('Не достучался до сервера. Включи Tailscale на телефоне и нажми «Ещё раз».');
@@ -185,7 +188,7 @@ async function sendSize(force = false) {
   const size = measure(), key = JSON.stringify(size);
   if (key === lastSize && !force) return;
   lastSize = key;
-  await gate('/login/screen', { session, ...size });
+  await gate('/login/screen', { session, ...size }, 60000);
 }
 function sizeChanged() {
   fitBody();
