@@ -25,6 +25,7 @@
   .shaped #vnc { right: auto; bottom: auto }
   .center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 24px; text-align: center; color: #b9c3e6; font-size: 15px; line-height: 1.45 }
   .center img { width: 120px; height: 120px }
+  #slow { margin-top: -8px; font-size: 14px; color: #7f8bb5 }
   button { border: 0; border-radius: 12px; font: inherit; font-size: 15px; font-weight: 500; color: #fff; background: #2a3763; padding: 12px 16px; cursor: pointer; -webkit-tap-highlight-color: transparent }
   button:active { transform: scale(.97) }
   button.main { background: #2fbf71 }
@@ -47,6 +48,7 @@
     <div class="center" id="intro">
       <img src="morzik-dizzy.png" alt="">
       <p id="introText">Секунду…</p>
+      <p id="slow" hidden>Долго нет ответа. Проверь, что Tailscale на этом устройстве включён</p>
       <button class="main" id="retry" hidden>Ещё раз</button>
     </div>
   </div>
@@ -92,9 +94,19 @@ function stop(text, retry = true) {
 
 class Refused extends Error {}
 // Without Tailscale the gate's name resolves to the public Funnel address, where this port never answers and
-// the connection just hangs, so every call gets a deadline. Shaping the screen can take a while on the server.
+// the connection just hangs, so every call gets a deadline, and after a few seconds of silence a hint to check it.
+// Shaping the screen can take a while on the server.
 const timeout = ms => AbortSignal.timeout?.(ms) ?? (() => { const c = new AbortController(); setTimeout(() => c.abort(), ms); return c.signal; })();
 async function gate(path, body, wait = 15000) {
+  const slow = setTimeout(() => { $('slow').hidden = false; }, 4000);
+  try {
+    return await ask(path, body, wait);
+  } finally {
+    clearTimeout(slow);
+    $('slow').hidden = true;
+  }
+}
+async function ask(path, body, wait) {
   let res;
   try {
     res = await fetch(GATE + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: timeout(wait),
