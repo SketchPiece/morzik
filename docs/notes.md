@@ -34,7 +34,7 @@
 
 ## Приложение
 
-Кнопка меню в чате («Морзик» слева от поля ввода, `setChatMenuButton` с `web_app`) открывает Mini App: https://morzik.pieces.run/?v=2 (pieces, piece `morzik`, сборка по `webapp/public/Dockerfile`: nginx со своим `nginx.conf` на порту 80). Там экран звонка Морзику. Первый макет («Скоро», голова кругом) — `design/canvas/mini-app/` (hosted: https://draftwall.pieces.run/c/mini-app-56e8); анимация звонка — `design/canvas/call/` (hosted: https://draftwall.pieces.run/c/call-9d15), выбран «Г»: мимика + свет по усам.
+Кнопка меню в чате («Морзик» слева от поля ввода, `setChatMenuButton` с `web_app`) открывает Mini App: https://morzik.pieces.run/?v=2 (pieces, piece `morzik`, сборка по `webapp/public/Dockerfile`: nginx со своим `default.conf.template` на порту 80). Там экран звонка Морзику. Первый макет («Скоро», голова кругом) — `design/canvas/mini-app/` (hosted: https://draftwall.pieces.run/c/mini-app-56e8); анимация звонка — `design/canvas/call/` (hosted: https://draftwall.pieces.run/c/call-9d15), выбран «Г»: мимика + свет по усам.
 
 - Голова — живая 3D-модель (с 24.10, до этого видео с альфой): `webapp/public/morzik.js` — копия `design/canvas/morzik-character/_cat2.bundle.js`; поменял `_cat2.js` — пересобери бандл (команда в начале `_three.js`) и скопируй. Режимы `headOnly`, `transparent`, `call` + `callStyle: 'both'`. Живой объект: `set('idle' | 'ringing' | 'listening' | 'thinking' | 'speaking' | 'dizzy')`, `setLevel(T => число или { v, wide })`. На прозрачном фоне светящиеся детали непрозрачные, иначе усы выпадают из альфы.
 - Состояния: до звонка спит (глаза-дужки, усы еле тлеют), гудки, слушает (уши вперёд, голова набок, свет по усам к мордочке), думает (пока работает инструмент `perform_task`: события `agent_tool_request` / `agent_tool_response`, включены в `client_events` агента 24.10), говорит (рот, кивки на ударениях, свет от мордочки). Ошибка — глаза-спиральки и текст. Под именем во время звонка — время звонка.
@@ -45,10 +45,10 @@
 - `morzik-dizzy.png` остался только для README.
 - На телефоне открывается на весь экран (`requestFullscreen`, только iOS и Android). Грабли, на которых это сидело весь день 23.10.2026:
   - стартовый код страницы должен быть внутри функции: глобальные `const` в нём на iPhone роняли скрипт целиком (`"Script error."`, вероятно, совпадение имён с кодом, который встраивает Telegram), и ни полного экрана, ни цвета шапки, ни видео не было;
-  - `Cache-Control: no-cache` в `nginx.conf` обязателен: без него WebView Telegram на iPhone держит старую страницу и сервер не спрашивает, новая версия не доходит;
+  - `Cache-Control: no-cache` в `default.conf.template` обязателен: без него WebView Telegram на iPhone держит старую страницу и сервер не спрашивает, новая версия не доходит;
   - `getChatMenuButton` может показывать старый адрес, хотя `setChatMenuButton` уже применился: проверять по логам сервера, куда пришёл телефон;
   - `telegram-web-app.js` лежит рядом со страницей (своя копия), шрифты Google грузятся без блокировки.
-- Выложить: `upload_code` для piece `morzik` из `webapp/public/`.
+- Выложить: `upload_code` для piece `morzik` из `webapp/public/`. Адрес сервера в tailnet в репозитории не лежит: это переменная `MORZIK_SERVER` сервиса `morzik` на pieces (имя хоста `sketch-server.<tailnet>.ts.net`, без схемы и порта). nginx подставляет её в `/config.js`, оттуда `index.html` берёт `/voice/start`, а `login.html` — шлюз на порту 6080.
 
 ## Приложение на iPhone (Morzik App)
 

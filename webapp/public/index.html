@@ -7,6 +7,7 @@
 <title>Морзик</title>
 <!-- Копия telegram-web-app.js лежит рядом, чтобы запуск не ждал telegram.org. -->
 <script src="telegram-web-app.js"></script>
+<script src="/config.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <!-- Шрифты не блокируют страницу: пока стили не пришли, нижний скрипт (полный экран, цвета) не выполнялся бы. -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=Unbounded:wght@600&display=swap" media="print" onload="this.media='all'">
@@ -78,7 +79,7 @@ if (askMic) media.getUserMedia = async constraints => {
   return new MediaStream(stream.getAudioTracks().map(t => t.clone()));
 };
 
-const START = 'https://sketch-server.<tailnet>.ts.net/voice/start';
+const START = `https://${window.MORZIK_SERVER}/voice/start`;  // адрес сервера — из config.js (переменная MORZIK_SERVER на pieces)
 const tg = window.Telegram && Telegram.WebApp;
 const button = document.getElementById('call'), status = document.getElementById('status');
 let call = null, busy = false, mode = 'listening', thinking = false, timer = null, failed = false;

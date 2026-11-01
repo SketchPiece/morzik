@@ -6,6 +6,7 @@
 <meta name="color-scheme" content="dark">
 <title>Вход — Морзик</title>
 <script src="telegram-web-app.js"></script>
+<script src="/config.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0 }
   html, body { height: 100%; background: #10172C; color: #fff; font-family: Inter, system-ui, sans-serif; -webkit-font-smoothing: antialiased; overflow: hidden }
@@ -66,7 +67,7 @@
 // Вход на сайт в браузере Морзика. Три ключа сразу: Tailscale (до сервера можно добраться только из tailnet,
 // с телефона пользователя), подпись Telegram (initData) и Face ID (ключ устройства, который Telegram отдаёт
 // только после Face ID). Пароль VNC сервер подставляет сам. Подробнее — login/gate.py.
-const GATE = 'https://sketch-server.<tailnet>.ts.net:6080';
+const GATE = `https://${window.MORZIK_SERVER}:6080`;  // адрес сервера — из config.js (переменная MORZIK_SERVER на pieces)
 // In the Morzik App (iPhone) the app provides the same calls: its token instead of initData, Face ID through the Keychain.
 const app = window.MorzikApp || null;
 const tg = app || (window.Telegram && Telegram.WebApp);
