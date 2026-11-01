@@ -57,7 +57,7 @@
     <input id="type" type="text" placeholder="Печатай сюда — уйдёт в браузер" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="send">
     <div class="row">
       <button id="zoom">Крупно</button>
-      <button id="keyboard" hidden aria-label="Клавиатура">⌨︎</button>
+      <button id="keyboard" hidden>⌨︎ Клавиатура</button>
       <button id="cancel">Не сейчас</button>
       <button class="main" id="done">Готово</button>
     </div>
@@ -79,6 +79,8 @@ let rfb = null, session = null, keysyms = null, finished = false;
 const touch = !!app || matchMedia('(pointer: coarse)').matches;
 const nativeKeyboard = app?.keyboard?.native === true;
 let shaped = false, events = null, full = null, keyboardOpen = false, lastSize = '', sizeTimer = 0, hideTimer = 0;
+// The app shows its own «Вставить» only while the screen is connected (older builds have no connected()).
+app?.connected?.(false);
 
 if (tg) {
   tg.ready(); tg.expand(); tg.setHeaderColor('#10172C'); tg.setBackgroundColor('#10172C'); tg.setBottomBarColor?.('#10172C');
@@ -158,6 +160,7 @@ async function faceKey(canEnroll) {
 
 async function open() {
   $('retry').hidden = true; $('retry').textContent = 'Ещё раз'; $('retry').onclick = open;
+  attempts = 0;
   $('introText').textContent = 'Секунду…';
   if (!tg?.initData) return stop('Открой меня кнопкой из чата с Морзиком.', false);
   try {
@@ -241,7 +244,10 @@ function onGateEvent(event) {
   if (event.type === 'focus') event.field ? showKeyboard(event.field) : hideKeyboardSoon();
   else if (event.type === 'end') {
     events?.close(); events = null; shaped = false;
-    if (event.reason === 'replaced' && !finished) { rfb?.disconnect(); stop('Экран открыли на другом устройстве.'); }
+    if (event.reason === 'replaced' && !finished) {
+      session = null;  // no reconnect: the screen is someone else's now
+      rfb?.disconnect(); stop('Экран открыли на другом устройстве.');
+    }
   }
 }
 
@@ -276,6 +282,7 @@ if (nativeKeyboard) {
     if (input.text) typeText(input.text);
     else if (input.key === 'Backspace') rfb.sendKey(0xff08, 'Backspace');
     else if (input.key === 'Enter') rfb.sendKey(0xff0d, 'Enter');
+    else if (input.key === 'Tab') rfb.sendKey(0xff09, 'Tab');  // the app's «Дальше» above the keyboard
   };
   app.keyboard.onClose = () => setKeyboard(false);  // the user put it away: the focus on the screen stays
   $('keyboard').addEventListener('click', () => {  // for fields the focus watch does not see (canvas and such)
@@ -324,6 +331,7 @@ async function connect({ ticket, password, request }) {
     rfb.focusOnClick = false;
   }
   rfb.addEventListener('connect', async () => {
+    attempts = 0; app?.connected?.(true);
     $('intro').hidden = true; $('controls').classList.add('on'); haptic('success');
     say(request ? (request.waiting ? 'войди и нажми «Готово»' : 'Морзик уже не ждёт этого входа') : 'экран Морзика');
     if (app?.clipboard) {
@@ -333,12 +341,52 @@ async function connect({ ticket, password, request }) {
   });
   rfb.addEventListener('clipboard', event => fromScreenClipboard(event.detail.text));
   rfb.addEventListener('disconnect', event => {
-    rfb = null; $('controls').classList.remove('on');
+    rfb = null; $('controls').classList.remove('on'); app?.connected?.(false);
     events?.close(); events = null; shaped = false;
-    if (!finished) stop(event.detail.clean ? 'Экран закрыт.' : 'Связь с экраном пропала.');
+    if (finished) return;
+    if (session) reconnect();
+    else if ($('intro').hidden) stop(event.detail.clean ? 'Экран закрыт.' : 'Связь с экраном пропала.');
   });
-  rfb.addEventListener('securityfailure', () => stop('Сервер не принял пароль экрана.'));
+  rfb.addEventListener('securityfailure', () => { session = null; stop('Сервер не принял пароль экрана.'); });
 }
+
+// The socket drops whenever iOS puts the app to sleep (the user went for a password, say). The session is
+// still alive on the gate, so the page comes back by itself once it is visible again: a new ticket, no Face ID.
+let attempts = 0, reconnecting = false;
+const visible = () => new Promise(resolve => {
+  if (!document.hidden) return resolve();
+  const seen = () => { if (!document.hidden) { document.removeEventListener('visibilitychange', seen); resolve(); } };
+  document.addEventListener('visibilitychange', seen);
+});
+async function reconnect() {
+  if (reconnecting) return;
+  reconnecting = true;
+  say('переподключаюсь…');
+  let again = false;
+  try {
+    await visible();
+    if (finished || !session) return;
+    if (attempts >= 3) return stop('Не достучался до сервера. Включи Tailscale на телефоне и нажми «Ещё раз».');
+    attempts++;
+    const reply = await gate('/login/reconnect', { session });
+    if (touch) await shape();
+    await connect(reply);
+  } catch (error) {
+    if (error.code === 'session') { session = null; stop('Сессия закончилась. Нажми «Ещё раз», чтобы войти заново.'); }
+    else if (error.code) stop(error.message);
+    else again = true;  // the network: try again in a moment
+  } finally {
+    reconnecting = false;
+  }
+  if (again) setTimeout(reconnect, 2000);
+}
+document.addEventListener('visibilitychange', () => {
+  // Back in the app with the screen still there: the events stream may have died meanwhile; shape() opens it again.
+  if (document.hidden || !touch || !rfb || reconnecting || finished) return;
+  if (events && events.readyState !== EventSource.CLOSED) return;
+  const status = $('status').textContent;
+  shape().then(() => say(status));
+});
 
 // One finger scrolls the page (Chrome turns the drag into touch), a tap clicks, two fingers scroll too.
 // Pinch would be Ctrl+wheel, which zooms the site in Chrome and stays after the login: not passed on.

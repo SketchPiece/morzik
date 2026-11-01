@@ -200,6 +200,19 @@ class GateTest(unittest.TestCase):
         self.assertEqual(data(), {"type": "end", "reason": "done"})
         self.assertIsNone(phone.owner)
 
+    def test_reconnect_needs_a_live_session(self):
+        _, enrolled, _ = self.post("/login/enroll", {"deviceId": "x"})
+        _, session, _ = self.post("/login/session", {"deviceKey": enrolled["deviceKey"]})
+        # Hours later the page is still open: older initData is fine, as for /login/done.
+        status, reply, _ = self.post("/login/reconnect", {"session": session["session"]}, age=3600)
+        self.assertEqual(status, 200)
+        self.assertEqual(reply["password"], "vncpass")
+        self.assertNotIn("session", reply)
+        self.assertNotEqual(reply["ticket"], session["ticket"])
+        self.assertIsNotNone(gate.Handler.tickets.get(reply["ticket"]))
+        self.assertEqual(self.post("/login/reconnect", {"session": "guess"})[:2], (401, {"error": "session"}))
+        self.assertEqual(self.post("/login/reconnect", {"session": session["session"]}, ip="100.2.2.2")[0], 403)
+
     def test_session_needs_a_known_key(self):
         status, reply, _ = self.post("/login/session", {"deviceKey": "guess"})
         self.assertEqual((status, reply["error"]), (401, "device_key"))

@@ -20,6 +20,8 @@ Routes:
   a window opened on the server with `gate.py allow-enroll [minutes]`. A key counts once it opened a session;
 - POST /login/session {initData, deviceKey, request} — the VNC password, a one-time websocket ticket
   (60 s) and a session id for /login/done;
+- POST /login/reconnect {initData, session} — for a live session, a new one-time ticket and the VNC password
+  (no deviceKey: Face ID was asked when the session was made); the page comes back after iOS dropped the socket;
 - POST /login/done {initData, session, outcome} — "done" or "cancel", seen by Morzik's request_login tool;
 - GET /login/ws?ticket=… — websocket to the screen, proxied as is to websockify;
 - POST /login/screen {initData, session, width, height, visible, dpr, device} — from a phone or a tablet:
@@ -449,7 +451,7 @@ SCROLL_TO_FOCUS = ("(() => { let el = document.activeElement; while (el && el.sh
                    " el = el.shadowRoot.activeElement; if (el && el.scrollIntoViewIfNeeded) el.scrollIntoViewIfNeeded(); })()")
 DESKTOP = (1440, 900)
 MAX_SIDE, MAX_PIXELS = 4096, 6_000_000
-RELEASE_AFTER = 20  # seconds the phone's screen stays after its page went away (app in the background, network)
+RELEASE_AFTER = 120  # seconds the phone's screen stays after its page went away (app in the background, network)
 
 
 def screen_metrics(body: dict) -> dict | None:
@@ -851,7 +853,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         routes = {"/login/state": self.state, "/login/enroll": self.enroll,
-                  "/login/session": self.session, "/login/done": self.done, "/login/screen": self.screen}
+                  "/login/session": self.session, "/login/reconnect": self.reconnect, "/login/done": self.done,
+                  "/login/screen": self.screen}
         route = routes.get(urllib.parse.urlsplit(self.path).path)
         if route is None:
             return self.error(404, "not_found")
@@ -874,7 +877,7 @@ class Handler(BaseHTTPRequestHandler):
                 log.warning("refused an unknown Morzik App token from %s", device)
                 return self.error(401, "app")
             return route(body, device)
-        max_age = DONE_MAX_AGE if route in (self.done, self.screen) else INIT_DATA_MAX_AGE
+        max_age = DONE_MAX_AGE if route in (self.done, self.screen, self.reconnect) else INIT_DATA_MAX_AGE
         user = verify_init_data(str(body.get("initData") or ""), self.settings["bot_token"], max_age)
         if user is None:
             return self.error(401, "telegram")
@@ -921,6 +924,18 @@ class Handler(BaseHTTPRequestHandler):
         ticket = self.tickets.add(TICKET_TTL, {"device": device})
         log.info("screen session for %s%s", device, f", request {request['id']}" if request else "")
         self.json_reply(200, {"ticket": ticket, "password": password, "session": session, "request": request})
+
+    def reconnect(self, body: dict, device: str) -> None:
+        """The websocket of a live session dropped (iOS put the app to sleep): a new ticket, no Face ID again."""
+        if self.sessions.get(str(body.get("session") or "")) is None:
+            return self.error(401, "session")
+        try:
+            password = self.settings["vnc_password_file"].read_text().strip()
+        except OSError:
+            return self.error(500, "vnc_password")
+        ticket = self.tickets.add(TICKET_TTL, {"device": device})
+        log.info("screen reconnect for %s", device)
+        self.json_reply(200, {"ticket": ticket, "password": password})
 
     def done(self, body: dict, device: str) -> None:
         session = self.sessions.get(str(body.get("session") or ""))
